@@ -4,6 +4,7 @@ import { PartitionService } from './partition.service';
 import { PartitionScheduler } from './partition.scheduler';
 import { TruncatePartitionDto } from './dto/truncate-partition.dto';
 import { CreatePartitionConfigDto, UpdatePartitionConfigDto, PartitionConfigResponseDto } from './dto/create-partition-config.dto';
+import { MigrateTableDto } from './dto/migrate-tabe.dto';
 
 @ApiTags('partitions')
 @Controller('partitions')
@@ -290,5 +291,97 @@ export class PartitionController {
             success: true,
             message: 'Partition maintenance triggered',
         };
+    }
+
+    /**
+     * GET /partitions/analyze/:tableName
+     * Analyze table for partition migration readiness
+     */
+    @Get('analyze/:tableName')
+    @ApiOperation({
+        summary: 'Analyze table for partitioning',
+        description: 'Checks if a table is ready to be migrated to partitioning. Analyzes updatedDate column and data distribution.'
+    })
+    @ApiParam({
+        name: 'tableName',
+        description: 'Name of the table to analyze',
+        example: 'users'
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Analysis completed successfully',
+        schema: {
+            example: {
+                tableName: 'users',
+                isPartitioned: false,
+                columnInfo: {
+                    name: 'updatedDate',
+                    type: 'timestamp',
+                    fullType: 'timestamp(3)'
+                },
+                tableStats: {
+                    estimatedRows: 150000,
+                    actualRows: 150000,
+                    dataSizeMB: 45.5,
+                    indexSizeMB: 12.3
+                },
+                dateRange: {
+                    earliestDate: '2024-01-15',
+                    latestDate: '2025-12-24',
+                    uniqueDates: 344,
+                    spanDays: 344
+                },
+                estimatedMigrationTime: '15 seconds'
+            }
+        }
+    })
+    async analyzeTable(@Param('tableName') tableName: string) {
+        return await this.partitionService.analyzeTableForMigration(tableName);
+    }
+
+    /**
+     * POST /partitions/migrate
+     * Migrate existing table to partitioned table
+     */
+    @Post('migrate')
+    @ApiOperation({
+        summary: 'Migrate table to partitioning',
+        description: 'Converts an existing table with updatedDate column to use daily RANGE partitioning. ⚠️ This operation may take time and requires table lock.'
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Migration completed successfully',
+        schema: {
+            example: {
+                success: true,
+                tableName: 'users',
+                partitionsCreated: 352,
+                dateRange: {
+                    start: '2024-01-15',
+                    end: '2025-12-24'
+                },
+                config: {
+                    retentionDays: 30,
+                    preCreateDays: 7,
+                    cleanupAction: 'DROP'
+                }
+            }
+        }
+    })
+    @ApiResponse({
+        status: 409,
+        description: 'Table is already partitioned'
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Table or updatedDate column not found'
+    })
+    async migrateTable(@Body() dto: MigrateTableDto) {
+        return await this.partitionService.migrateTableToPartitions(
+            dto.tableName,
+            dto.retentionDays,
+            dto.preCreateDays,
+            dto.cleanupAction
+        );
     }
 }
