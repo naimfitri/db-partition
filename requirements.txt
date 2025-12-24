@@ -1,0 +1,2 @@
+# Test Data Generator Requirements
+mysql-connector-python==8.2.0
