@@ -2,9 +2,6 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PartitionModule } from './partition/partition.module';
-import { EventsModule } from './events/events.module';
-import { MetricsModule } from './metrics/metrics.module';
-import { HealthModule } from './health/health.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -16,9 +13,6 @@ import { validationSchema } from './config/validation.schema';
 @Module({
   imports: [
     PartitionModule,
-    EventsModule,
-    MetricsModule,
-    HealthModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [databaseConfig, partitionConfig],
