@@ -11,6 +11,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import databaseConfig from './config/database.config';
 import partitionConfig from './config/partition.config';
 import { validationSchema } from './config/validation.schema';
+import { PartitionConfigModule } from './partition-config/partition-config.module';
 
 
 @Module({
@@ -44,6 +45,7 @@ import { validationSchema } from './config/validation.schema';
       }),
     }),
     ScheduleModule.forRoot(),
+    PartitionConfigModule,
   ],
   controllers: [AppController],
   providers: [AppService],

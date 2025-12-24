@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PartitionService } from './partition.service';
 import { PartitionController } from './partition.controller';
 import { PartitionScheduler } from './partition.scheduler';
-import { PartitionConfigEntity } from './entity/partittion-config.entity';
+import { PartitionConfigEntity } from '../partition-config/entity/partittion-config.entity';
 
 @Module({
   imports: [TypeOrmModule.forFeature([PartitionConfigEntity])],
