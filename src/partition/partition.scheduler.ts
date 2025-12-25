@@ -20,17 +20,17 @@ export class PartitionScheduler implements OnModuleInit {
    */
   async onModuleInit() {
     if (!this.enabled) {
-      this.logger.warn('⚠️  Partition management is DISABLED');
+      this.logger.warn('Partition management is DISABLED');
       return;
     }
 
-    this.logger.log('🚀 Initializing partition manager...');
+    this.logger.log('Initializing partition manager...');
     
     try {
       await this.partitionService.ensureFuturePartitions();
-      this.logger.log('✅ Startup partition check complete');
+      this.logger.log('Startup partition check complete');
     } catch (error) {
-      this.logger.error('❌ Startup partition check failed', error);
+      this.logger.error('Startup partition check failed', error);
       // Don't crash the app, but log prominently
     }
   }
@@ -43,7 +43,7 @@ export class PartitionScheduler implements OnModuleInit {
   async handleDailyPartitionMaintenance() {
     if (!this.enabled) return;
 
-    this.logger.log('🔧 Starting daily partition maintenance...');
+    this.logger.log('Starting daily partition maintenance...');
 
     try {
       // 1. Ensure future partitions exist
@@ -52,9 +52,9 @@ export class PartitionScheduler implements OnModuleInit {
       // 2. Cleanup old partitions
       await this.partitionService.cleanupOldPartitions();
       
-      this.logger.log('✅ Daily partition maintenance complete');
+      this.logger.log('Daily partition maintenance complete');
     } catch (error) {
-      this.logger.error('❌ Partition maintenance failed', error);
+      this.logger.error('Partition maintenance failed', error);
     }
   }
 
@@ -62,7 +62,7 @@ export class PartitionScheduler implements OnModuleInit {
    * Manual trigger via API (optional)
    */
   async triggerManualMaintenance() {
-    this.logger.log('🔧 Manual partition maintenance triggered');
+    this.logger.log('Manual partition maintenance triggered');
     await this.handleDailyPartitionMaintenance();
   }
 }

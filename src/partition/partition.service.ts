@@ -258,7 +258,7 @@ export class PartitionService {
         await this.dataSource.query(
             `ALTER TABLE ${escapedTable} DROP PARTITION ${escapedPartition}`
         );
-        this.logger.warn(`🗑️  Dropped partition ${partitionName} from ${tableName}`);
+        this.logger.warn(`Dropped partition ${partitionName} from ${tableName}`);
     }
 
     /**
@@ -271,7 +271,7 @@ export class PartitionService {
         await this.dataSource.query(
             `ALTER TABLE ${escapedTable} TRUNCATE PARTITION ${escapedPartition}`
         );
-        this.logger.log(`🧹 Truncated partition ${partitionName} in ${tableName}`);
+        this.logger.log(`Truncated partition ${partitionName} in ${tableName}`);
     }
 
     /**
@@ -639,7 +639,7 @@ export class PartitionService {
 
         await this.configRepository.save(config);
 
-        this.logger.log(`✅ Migration completed for ${tableName}`);
+        this.logger.log(`Migration completed for ${tableName}`);
 
         return {
             success: true,
