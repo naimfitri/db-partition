@@ -17,6 +17,50 @@ export class PartitionService {
     ) { }
 
     /**
+     * Validates identifier (table/partition name) contains only safe characters
+     */
+    private validateIdentifier(identifier: string, type: string = 'identifier'): void {
+        // Allow only alphanumeric, underscores, and hyphens
+        const validPattern = /^[a-zA-Z0-9_-]+$/;
+        
+        if (!validPattern.test(identifier)) {
+            throw new Error(
+                `Invalid ${type}: "${identifier}". Only alphanumeric, underscore, and hyphen allowed.`
+            );
+        }
+        
+        // Prevent excessively long names
+        if (identifier.length > 64) {
+            throw new Error(`${type} name too long. Maximum 64 characters.`);
+        }
+    }
+
+    /**
+     * Escapes identifier with backticks for MySQL
+     */
+    private escapeIdentifier(identifier: string): string {
+        // First validate it's safe
+        this.validateIdentifier(identifier);
+        
+        // Escape any backticks and wrap in backticks
+        return `\`${identifier.replace(/`/g, '``')}\``;
+    }
+
+    /**
+     * Validates table exists and returns escaped name
+     */
+    private async validateAndEscapeTableName(tableName: string): Promise<string> {
+        this.validateIdentifier(tableName, 'table name');
+        
+        const exists = await this.checkTableExists(tableName);
+        if (!exists) {
+            throw new NotFoundException(`Table ${tableName} does not exist`);
+        }
+        
+        return this.escapeIdentifier(tableName);
+    }
+
+    /**
      * Get all active partition configurations from database
      */
     async getActiveConfigs(): Promise<PartitionConfigEntity[]> {
@@ -234,6 +278,9 @@ export class PartitionService {
    * List all partitions for a table
    */
     async listPartitions(tableName: string) {
+        // Validate table name first
+        await this.validateAndEscapeTableName(tableName);
+        
         return await this.dataSource.query(
             `SELECT 
         partition_name,
@@ -276,50 +323,6 @@ export class PartitionService {
      */
     private formatDate(date: Date): string {
         return date.toISOString().split('T')[0];
-    }
-
-    /**
-     * Validate identifier (table/partition name) contains only safe character
-     */
-    private validateIdentifier(identifier: string, type: string = 'identifier'): void {
-        // Allow only alphanumeric, underscores, and hyphens
-        const validPattern = /^[a-zA-Z0-9_-]+$/;
-
-        if (!validPattern.test(identifier)) {
-            throw new Error(
-                `Invalid ${type}: "${identifier}". Only alphanumeric, underscore, and hyphen allowed.`
-            );
-        }
-
-        // Prevent excessively long names
-        if (identifier.length > 64) {
-            throw new Error(`${type} name too long. Maximum 64 characters.`);
-        }
-    }
-
-    /**
-     * Escapes identifier with backticks for MySQL
-     */
-    private escapeIdentifier(identifier: string): string {
-        // First validate it's safe
-        this.validateIdentifier(identifier);
-
-        // Escape any backticks and wrap in backticks
-        return `\`${identifier.replace(/`/g, '``')}\``;
-    }
-
-    /**
-     * Validates table exists and returns escaped name
-     */
-    private async validateAndEscapeTableName(tableName: string): Promise<string> {
-        this.validateIdentifier(tableName, 'table name');
-
-        const exists = await this.checkTableExists(tableName);
-        if (!exists) {
-            throw new NotFoundException(`Table ${tableName} does not exist`);
-        }
-
-        return this.escapeIdentifier(tableName);
     }
 
 
