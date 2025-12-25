@@ -3,7 +3,8 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { PartitionService } from './partition.service';
 import { PartitionScheduler } from './partition.scheduler';
 import { TruncatePartitionDto } from './dto/truncate-partition.dto';
-import { CreatePartitionConfigDto, UpdatePartitionConfigDto, PartitionConfigResponseDto } from './dto/create-partition-config.dto';
+// import { CreatePartitionConfigDto, UpdatePartitionConfigDto, PartitionConfigResponseDto } from './dto/create-partition-config.dto';
+import { MigrateTableDto } from './dto/migrate-tabe.dto';
 
 @ApiTags('partitions')
 @Controller('partitions')
@@ -12,143 +13,6 @@ export class PartitionController {
         private partitionService: PartitionService,
         private partitionScheduler: PartitionScheduler,
     ) { }
-
-    /**
-   * GET /partitions/config
-   * Get all partition configurations
-   */
-    @Get('config')
-    @ApiOperation({
-        summary: 'List partition configurations',
-        description: 'Retrieves all partition management configurations from database'
-    })
-    @ApiResponse({
-        status: 200,
-        description: 'Configuration list retrieved successfully',
-        type: [PartitionConfigResponseDto]
-    })
-    async getAllConfigs() {
-        return await this.partitionService.getAllConfigs();
-    }
-
-    /**
- * GET /partitions/config/:id
- * Get partition configuration by ID
- */
-    @Get('config/:id')
-    @ApiOperation({
-        summary: 'Get partition configuration',
-        description: 'Retrieves a specific partition configuration by ID'
-    })
-    @ApiParam({
-        name: 'id',
-        description: 'Configuration ID',
-        example: 1
-    })
-    @ApiResponse({
-        status: 200,
-        description: 'Configuration retrieved successfully',
-        type: PartitionConfigResponseDto
-    })
-    @ApiResponse({
-        status: 404,
-        description: 'Configuration not found'
-    })
-    async getConfigById(@Param('id') id: string) {
-        return await this.partitionService.getConfigById(+id);
-    }
-
-    /**
-     * POST /partitions/config
-     * Create partition configuration
-     */
-    @Post('config')
-    @ApiOperation({
-        summary: 'Create partition configuration',
-        description: 'Creates a new partition management configuration for a table'
-    })
-    @ApiResponse({
-        status: 201,
-        description: 'Configuration created successfully',
-        type: PartitionConfigResponseDto
-    })
-    @ApiResponse({
-        status: 400,
-        description: 'Invalid input data'
-    })
-    @ApiResponse({
-        status: 409,
-        description: 'Configuration already exists for this table'
-    })
-    async createConfig(@Body() dto: CreatePartitionConfigDto) {
-        return await this.partitionService.createConfig(dto);
-    }
-
-    /**
-     * PUT /partitions/config/:id
-     * Update partition configuration
-     */
-    @Put('config/:id')
-    @ApiOperation({
-        summary: 'Update partition configuration',
-        description: 'Updates an existing partition configuration'
-    })
-    @ApiParam({
-        name: 'id',
-        description: 'Configuration ID',
-        example: 1
-    })
-    @ApiResponse({
-        status: 200,
-        description: 'Configuration updated successfully',
-        type: PartitionConfigResponseDto
-    })
-    @ApiResponse({
-        status: 404,
-        description: 'Configuration not found'
-    })
-    async updateConfig(
-        @Param('id') id: string,
-        @Body() dto: UpdatePartitionConfigDto
-    ) {
-        return await this.partitionService.updateConfig(+id, dto);
-    }
-
-    /**
-     * DELETE /partitions/config/:id
-     * Delete partition configuration
-     */
-    @Delete('config/:id')
-    @ApiOperation({
-        summary: 'Delete partition configuration',
-        description: 'Deletes a partition configuration (does not affect existing partitions)'
-    })
-    @ApiParam({
-        name: 'id',
-        description: 'Configuration ID',
-        example: 1
-    })
-    @ApiResponse({
-        status: 200,
-        description: 'Configuration deleted successfully',
-        schema: {
-            example: {
-                success: true,
-                message: 'Configuration deleted successfully'
-            }
-        }
-    })
-    @ApiResponse({
-        status: 404,
-        description: 'Configuration not found'
-    })
-    async deleteConfig(@Param('id') id: string) {
-        await this.partitionService.deleteConfig(+id);
-        return {
-            success: true,
-            message: 'Configuration deleted successfully'
-        };
-    }
 
     @Get(':tableName')
     @ApiOperation({
@@ -290,5 +154,97 @@ export class PartitionController {
             success: true,
             message: 'Partition maintenance triggered',
         };
+    }
+
+    /**
+     * GET /partitions/analyze/:tableName
+     * Analyze table for partition migration readiness
+     */
+    @Get('analyze/:tableName')
+    @ApiOperation({
+        summary: 'Analyze table for partitioning',
+        description: 'Checks if a table is ready to be migrated to partitioning. Analyzes updatedDate column and data distribution.'
+    })
+    @ApiParam({
+        name: 'tableName',
+        description: 'Name of the table to analyze',
+        example: 'users'
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Analysis completed successfully',
+        schema: {
+            example: {
+                tableName: 'users',
+                isPartitioned: false,
+                columnInfo: {
+                    name: 'updatedDate',
+                    type: 'timestamp',
+                    fullType: 'timestamp(3)'
+                },
+                tableStats: {
+                    estimatedRows: 150000,
+                    actualRows: 150000,
+                    dataSizeMB: 45.5,
+                    indexSizeMB: 12.3
+                },
+                dateRange: {
+                    earliestDate: '2024-01-15',
+                    latestDate: '2025-12-24',
+                    uniqueDates: 344,
+                    spanDays: 344
+                },
+                estimatedMigrationTime: '15 seconds'
+            }
+        }
+    })
+    async analyzeTable(@Param('tableName') tableName: string) {
+        return await this.partitionService.analyzeTableForMigration(tableName);
+    }
+
+    /**
+     * POST /partitions/migrate
+     * Migrate existing table to partitioned table
+     */
+    @Post('migrate')
+    @ApiOperation({
+        summary: 'Migrate table to partitioning',
+        description: 'Converts an existing table with updatedDate column to use daily RANGE partitioning. ⚠️ This operation may take time and requires table lock.'
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Migration completed successfully',
+        schema: {
+            example: {
+                success: true,
+                tableName: 'users',
+                partitionsCreated: 352,
+                dateRange: {
+                    start: '2024-01-15',
+                    end: '2025-12-24'
+                },
+                config: {
+                    retentionDays: 30,
+                    preCreateDays: 7,
+                    cleanupAction: 'DROP'
+                }
+            }
+        }
+    })
+    @ApiResponse({
+        status: 409,
+        description: 'Table is already partitioned'
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Table or updatedDate column not found'
+    })
+    async migrateTable(@Body() dto: MigrateTableDto) {
+        return await this.partitionService.migrateTableToPartitions(
+            dto.tableName,
+            dto.retentionDays,
+            dto.preCreateDays,
+            dto.cleanupAction
+        );
     }
 }

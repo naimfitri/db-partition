@@ -27,8 +27,6 @@ async function bootstrap() {
     .setDescription('NestJS microservice for managing MariaDB time-based table partitions')
     .setVersion('1.0')
     .addTag('partitions', 'Partition management operations')
-    .addTag('events', 'Event log operations')
-    .addTag('metrics', 'Metrics operations')
     .addTag('health', 'Health check endpoints')
     .build();
 
