@@ -41,14 +41,15 @@ export class PartitionService {
      * Check if table exists in database
      */
     private async checkTableExists(tableName: string): Promise<boolean> {
-        const queryRunner = this.dataSource.createQueryRunner();
+        const result = await this.dataSource.query(
+            `SELECT COUNT(*) as count
+         FROM information_schema.tables
+         WHERE table_schema = DATABASE()
+         AND table_name = ?`,
+            [tableName]
+        );
 
-        try {
-            const table = await queryRunner.getTable(tableName);
-            return !!table;
-        } finally {
-            await queryRunner.release();
-        }
+        return result[0].count > 0;
     }
 
     /**
@@ -60,14 +61,36 @@ export class PartitionService {
         nextDay.setDate(nextDay.getDate() + 1);
         const nextDayStr = this.formatDate(nextDay);
 
-        try {
-            await this.dataSource.query(
-                `ALTER TABLE ${tableName} ADD PARTITION (
-                    PARTITION ${partitionName} VALUES LESS THAN (TO_DAYS('${nextDayStr}'))
-                )`
-            )
+        // Check if p_future (MAXVALUE) partition exists
+        const [futurePartition] = await this.dataSource.query(
+            `SELECT partition_name, partition_description
+             FROM information_schema.partitions
+             WHERE table_schema = DATABASE()
+             AND table_name = ?
+             AND partition_name = 'p_future'`,
+            [tableName]
+        );
 
-            this.logger.log(`Created partiton ${partitionName} for ${tableName}`);
+        try {
+            if (futurePartition) {
+                // Need to reorganize p_future to add new partition before it
+                this.logger.log(`Reorganizing p_future to add ${partitionName} for ${tableName}`);
+                await this.dataSource.query(
+                    `ALTER TABLE ${tableName} REORGANIZE PARTITION p_future INTO (
+                        PARTITION ${partitionName} VALUES LESS THAN (TO_DAYS('${nextDayStr}')),
+                        PARTITION p_future VALUES LESS THAN MAXVALUE
+                    )`
+                );
+            } else {
+                // No MAXVALUE partition, can add normally
+                await this.dataSource.query(
+                    `ALTER TABLE ${tableName} ADD PARTITION (
+                        PARTITION ${partitionName} VALUES LESS THAN (TO_DAYS('${nextDayStr}'))
+                    )`
+                );
+            }
+
+            this.logger.log(`Created partition ${partitionName} for ${tableName}`);
         } catch (error) {
             if (!error.message.includes('duplicate partition')) {
                 throw error;
@@ -121,19 +144,25 @@ export class PartitionService {
         const configs = await this.getActiveConfigs();
 
         for (const tableConfig of configs) {
+            this.logger.log(`Config for ${tableConfig.tableName}: retentionDays=${tableConfig.retentionDays}, preCreateDays=${tableConfig.preCreateDays}, cleanupAction=${tableConfig.cleanupAction}`);
+            
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - tableConfig.retentionDays);
+
+            this.logger.log(`Checking old partitions for ${tableConfig.tableName}, cutoff date: ${this.formatDate(cutoffDate)}`);
 
             const oldPartitions = await this.getPartitionsOlderThan(
                 tableConfig.tableName,
                 cutoffDate
             );
 
+            this.logger.log(`Found ${oldPartitions.length} old partitions to ${tableConfig.cleanupAction}`);
+
             for (const partition of oldPartitions) {
                 if (tableConfig.cleanupAction === 'DROP') {
-                    await this.dropPartition(tableConfig.tableName, partition.partitionName);
+                    await this.dropPartition(tableConfig.tableName, partition.partition_name);
                 } else {
-                    await this.truncatePartition(tableConfig.tableName, partition.partitionName);
+                    await this.truncatePartition(tableConfig.tableName, partition.partition_name);
                 }
             }
         }
@@ -144,16 +173,30 @@ export class PartitionService {
    */
     private async getPartitionsOlderThan(tableName: string, date: Date) {
         const dateStr = this.formatDate(date);
+        const targetPartitionName = `p_${dateStr.replace(/-/g, '')}`;
 
-        return await this.dataSource.query(
+        this.logger.log(`Looking for partitions < ${targetPartitionName}`);
+
+        // Get all partitions and filter by date pattern
+        const allPartitions = await this.dataSource.query(
             `SELECT partition_name, partition_description
        FROM information_schema.partitions
        WHERE table_schema = DATABASE()
        AND table_name = ?
        AND partition_name IS NOT NULL
-       AND partition_name < ?`,
-            [tableName, `p_${dateStr.replace(/-/g, '')}`]
+       AND partition_name NOT IN ('p_future', 'p_historical')
+       AND partition_name REGEXP '^p_[0-9]{8}$'`,
+            [tableName]
         );
+
+        this.logger.log(`All date partitions: ${allPartitions.map(p => p.partition_name).join(', ')}`);
+
+        // Filter partitions older than or equal to target date
+        const oldPartitions = allPartitions.filter(p => p.partition_name <= targetPartitionName);
+        
+        this.logger.log(`Filtered old partitions: ${oldPartitions.map(p => p.partition_name).join(', ') || 'none'}`);
+
+        return oldPartitions;
     }
 
     /**
@@ -343,15 +386,61 @@ export class PartitionService {
             throw new ConflictException(`Table ${tableName} is already partitioned`);
         }
 
-        // Step 2: Add partition_date column
-        this.logger.log(`Adding partition_date column to ${tableName}`);
-
-        await this.dataSource.query(
-            `ALTER TABLE ${tableName} 
-     ADD COLUMN partition_date DATE 
-     GENERATED ALWAYS AS (DATE(updatedDate)) STORED 
-     COMMENT 'Auto-generated from updatedDate for partitioning'`
+        // Step 2: Add partition_date column (if not exists)
+        const [partitionDateColumn] = await this.dataSource.query(
+            `SELECT column_name, generation_expression, extra
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+            AND table_name = ?
+            AND column_name = 'partition_date'`,
+            [tableName]
         );
+
+        if (!partitionDateColumn) {
+            this.logger.log(`Adding partition_date column to ${tableName}`);
+
+            // Add as regular column, not generated
+            await this.dataSource.query(
+                `ALTER TABLE ${tableName} 
+                ADD COLUMN partition_date DATE NOT NULL
+                COMMENT 'Partition key based on updatedDate'`
+            );
+
+            // Populate with values from updatedDate
+            this.logger.log(`Populating partition_date from updatedDate in ${tableName}`);
+            await this.dataSource.query(
+                `UPDATE ${tableName} SET partition_date = DATE(updatedDate)`
+            );
+
+            // Add index for performance
+            await this.dataSource.query(
+                `ALTER TABLE ${tableName} ADD INDEX idx_partition_date (partition_date)`
+            );
+        } else if (partitionDateColumn.generation_expression) {
+            // Column exists but is a GENERATED column - need to recreate it
+            this.logger.log(`Recreating partition_date column in ${tableName} (was generated, needs to be regular)`);
+            
+            await this.dataSource.query(
+                `ALTER TABLE ${tableName} DROP COLUMN partition_date`
+            );
+            
+            await this.dataSource.query(
+                `ALTER TABLE ${tableName} 
+                ADD COLUMN partition_date DATE NOT NULL
+                COMMENT 'Partition key based on updatedDate'`
+            );
+            
+            this.logger.log(`Populating partition_date from updatedDate in ${tableName}`);
+            await this.dataSource.query(
+                `UPDATE ${tableName} SET partition_date = DATE(updatedDate)`
+            );
+            
+            await this.dataSource.query(
+                `ALTER TABLE ${tableName} ADD INDEX idx_partition_date (partition_date)`
+            );
+        } else {
+            this.logger.log(`partition_date column already exists in ${tableName}`);
+        }
 
         // Step 3: Get current primary key
         const [pkInfo] = await this.dataSource.query(
@@ -377,13 +466,19 @@ export class PartitionService {
             [tableName]
         );
 
-        const pkColumnNames = pkColumns.map(col => col.column_name).join(', ');
+        const pkColumnNames = pkColumns.map(col => col.column_name);
 
-        await this.dataSource.query(
-            `ALTER TABLE ${tableName} 
-     DROP PRIMARY KEY,
-     ADD PRIMARY KEY (${pkColumnNames}, partition_date)`
-        );
+        // Only update primary key if partition_date is not already in it
+        if (!pkColumnNames.includes('partition_date')) {
+            this.logger.log(`Adding partition_date to primary key of ${tableName}`);
+            await this.dataSource.query(
+                `ALTER TABLE ${tableName} 
+         DROP PRIMARY KEY,
+         ADD PRIMARY KEY (${pkColumnNames.join(', ')}, partition_date)`
+            );
+        } else {
+            this.logger.log(`partition_date already in primary key of ${tableName}`);
+        }
 
         // Step 5: Create partitions for existing data range
         this.logger.log(`Creating partitions for date range: ${analysis.dateRange.earliestDate} to ${analysis.dateRange.latestDate}`);
@@ -392,7 +487,7 @@ export class PartitionService {
         const endDate = new Date(analysis.dateRange.latestDate);
 
         // Create historical partition for old data
-        const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${analysis.dateRange.earliestDate}'))`];
+        const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${this.formatDate(startDate)}'))`];
 
         // Create daily partitions
         const currentDate = new Date(startDate);
@@ -422,6 +517,9 @@ export class PartitionService {
                 `PARTITION p_${partitionDate.replace(/-/g, '')} VALUES LESS THAN (TO_DAYS('${nextDateStr}'))`
             );
         }
+
+        // Add MAXVALUE partition to catch any future data beyond pre-created partitions
+        partitions.push(`PARTITION p_future VALUES LESS THAN MAXVALUE`);
 
         // Step 6: Apply partitioning
         this.logger.log(`Applying RANGE partitioning to ${tableName}`);

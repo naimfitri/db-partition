@@ -1,0 +1,9 @@
+-- Create testing table for data generation
+CREATE TABLE IF NOT EXISTS testing (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  randname VARCHAR(255) NOT NULL,
+  randnumb INT NOT NULL,
+  updatedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  createdDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_createdDate (createdDate)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
