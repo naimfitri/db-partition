@@ -129,6 +129,45 @@ export class PartitionController {
     }
 
     /**
+     * POST /partitions/truncate
+     * Truncate a specific partition by date
+     */
+    @Post('drop')
+    @ApiOperation({
+        summary: 'Drop partition',
+        description: 'Removes specific partition'
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Partition drop successfully',
+        schema: {
+            example: {
+                success: true,
+                message: 'Partition p_20251224 drop'
+            }
+        }
+    })
+    @ApiResponse({
+        status: 400,
+        description: 'Invalid input data'
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Partition not found'
+    })
+    async dropPartition(@Body() dto: TruncatePartitionDto) {
+        const date = new Date(dto.partitionDate);
+        const partitionName = `p_${dto.partitionDate.replace(/-/g, '')}`;
+
+        await this.partitionService.dropPartition(dto.tableName, partitionName);
+
+        return {
+            success: true,
+            message: `Partition ${partitionName} drop`,
+        };
+    }
+
+    /**
      * POST /partitions/maintenance/trigger
      * Manually trigger partition maintenance
      */

@@ -84,7 +84,7 @@ export class PartitionService {
     /**
      * Check if table exists in database
      */
-    private async checkTableExists(tableName: string): Promise<boolean> {
+    async checkTableExists(tableName: string): Promise<boolean> {
         const result = await this.dataSource.query(
             `SELECT COUNT(*) as count
          FROM information_schema.tables
@@ -233,7 +233,7 @@ export class PartitionService {
        WHERE table_schema = DATABASE()
        AND table_name = ?
        AND partition_name IS NOT NULL
-       AND partition_name NOT IN ('p_future', 'p_historical')
+       AND partition_name NOT IN ('p_future')
        AND partition_name REGEXP '^p_[0-9]{8}$'`,
             [tableName]
         );
@@ -542,9 +542,13 @@ export class PartitionService {
         const startDate = new Date(analysis.dateRange.earliestDate);
         const endDate = new Date(analysis.dateRange.latestDate);
 
-        // Create historical partition for old data
-        const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${this.formatDate(startDate)}'))`];
 
+
+        // Create historical partition for old data
+        // const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${this.formatDate(startDate)}'))`];
+
+        const partitions: string[] = [];
+        
         // Create daily partitions
         const currentDate = new Date(startDate);
         while (currentDate <= endDate) {
@@ -592,7 +596,8 @@ export class PartitionService {
             }
 
             // Regular value case with parentheses
-            match = p.match(/PARTITION\s+(\w+)\s+VALUES\s+LESS\s+THAN\s+\(([^)]+)\)/i);
+            // Updated regex to properly handle nested parentheses like TO_DAYS('2023-01-01')
+            match = p.match(/PARTITION\s+(\w+)\s+VALUES\s+LESS\s+THAN\s+\((.*)\)$/i);
 
             if (!match) {
                 throw new Error(`Invalid partition format: ${p}`);

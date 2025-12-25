@@ -28,6 +28,8 @@ export class GeneratorService {
       const startDate = new Date();
       startDate.setHours(0, 0, 0, 0);
 
+      startDate.setDate(startDate.getDate() - 18);
+
       // Generate data for each date
       for (let dateIndex = 0; dateIndex < numberOfDates; dateIndex++) {
         const currentDate = new Date(startDate);
