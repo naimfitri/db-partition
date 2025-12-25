@@ -1,4 +1,4 @@
-import { IsString, IsDateString } from 'class-validator';
+import { IsString, IsDateString, MaxLength, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class TruncatePartitionDto {
@@ -7,6 +7,10 @@ export class TruncatePartitionDto {
     example: 'event_logs',
   })
   @IsString()
+  @MaxLength(64, { message: 'Table name must not exceed 64 characters' })
+  @Matches(/^[a-zA-Z0-9_-]+$/, {
+    message: 'Table name can only contain alphanumeric characters, underscores, and hyphens'
+  })
   tableName: string;
 
   @ApiProperty({

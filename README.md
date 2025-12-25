@@ -82,12 +82,20 @@ The application will be available at:
 ### Health Check
 - `GET /health` - Service health status
 
-### Partition Management
-- `GET /partitions` - List all partition configurations
-- `POST /partitions` - Create new partition configuration
-- `GET /partitions/:id` - Get specific partition configuration
-- `PUT /partitions/:id` - Update partition configuration
-- `DELETE /partitions/:id` - Delete partition configuration
+### Partition Configuration Management
+- `GET /partition-config/config` - List all partition configurations
+- `GET /partition-config/config/:id` - Get specific partition configuration
+- `POST /partition-config/config` - Create new partition configuration
+- `PUT /partition-config/config/:id` - Update partition configuration
+- `DELETE /partition-config/config/:id` - Delete partition configuration
+
+### Partition Operations
+- `GET /partitions/:tableName` - List all partitions for a table
+- `GET /partitions/:tableName/coverage` - Get partition date range coverage
+- `POST /partitions/truncate` - Truncate a specific partition by date
+- `POST /partitions/maintenance/trigger` - Manually trigger partition maintenance
+- `GET /partitions/analyze/:tableName` - Analyze table for partition migration readiness
+- `POST /partitions/migrate` - Migrate existing table to use partitioning
 
 Visit `/api/docs` for complete API documentation with interactive examples.
 

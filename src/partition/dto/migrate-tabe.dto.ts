@@ -1,4 +1,4 @@
-import { IsString, IsInt, Min, IsEnum, IsOptional } from 'class-validator';
+import { IsString, IsInt, Min, IsEnum, IsOptional, MaxLength, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class MigrateTableDto {
@@ -7,6 +7,10 @@ export class MigrateTableDto {
     description: 'Name of the existing table to migrate to partitioning' 
   })
   @IsString()
+  @MaxLength(64, { message: 'Table name must not exceed 64 characters' })
+  @Matches(/^[a-zA-Z0-9_-]+$/, {
+    message: 'Table name can only contain alphanumeric characters, underscores, and hyphens'
+  })
   tableName: string;
 
   @ApiProperty({ 

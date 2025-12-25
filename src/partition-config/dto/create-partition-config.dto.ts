@@ -1,5 +1,5 @@
 // src/partition/dto/partition-config.dto.ts
-import { IsString, IsInt, Min, IsEnum, IsBoolean, IsOptional } from 'class-validator';
+import { IsString, IsInt, Min, IsEnum, IsBoolean, IsOptional, MaxLength, Matches } from 'class-validator';
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 
 export class CreatePartitionConfigDto {
@@ -8,6 +8,10 @@ export class CreatePartitionConfigDto {
     description: 'Name of the table to partition' 
   })
   @IsString()
+  @MaxLength(64, { message: 'Table name must not exceed 64 characters' })
+  @Matches(/^[a-zA-Z0-9_-]+$/, {
+    message: 'Table name can only contain alphanumeric characters, underscores, and hyphens'
+  })
   tableName: string;
 
   @ApiProperty({ 
