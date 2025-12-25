@@ -56,7 +56,12 @@ export class PartitionService {
      * Create partiton for specific date
      */
     async createPartition(tableName: string, date: Date): Promise<void> {
+
+        const escapedTable = await this.validateAndEscapeTableName(tableName);
         const partitionName = this.getPartitionName(date);
+        const escapedPartition = this.escapeIdentifier(partitionName);
+
+
         const nextDay = new Date(date);
         nextDay.setDate(nextDay.getDate() + 1);
         const nextDayStr = this.formatDate(nextDay);
@@ -76,16 +81,16 @@ export class PartitionService {
                 // Need to reorganize p_future to add new partition before it
                 this.logger.log(`Reorganizing p_future to add ${partitionName} for ${tableName}`);
                 await this.dataSource.query(
-                    `ALTER TABLE ${tableName} REORGANIZE PARTITION p_future INTO (
-                        PARTITION ${partitionName} VALUES LESS THAN (TO_DAYS('${nextDayStr}')),
+                    `ALTER TABLE ${escapedTable} REORGANIZE PARTITION p_future INTO (
+                        PARTITION ${escapedPartition} VALUES LESS THAN (TO_DAYS('${nextDayStr}')),
                         PARTITION p_future VALUES LESS THAN MAXVALUE
                     )`
                 );
             } else {
                 // No MAXVALUE partition, can add normally
                 await this.dataSource.query(
-                    `ALTER TABLE ${tableName} ADD PARTITION (
-                        PARTITION ${partitionName} VALUES LESS THAN (TO_DAYS('${nextDayStr}'))
+                    `ALTER TABLE ${escapedTable} ADD PARTITION (
+                        PARTITION ${escapedPartition} VALUES LESS THAN (TO_DAYS('${nextDayStr}'))
                     )`
                 );
             }
@@ -145,7 +150,7 @@ export class PartitionService {
 
         for (const tableConfig of configs) {
             this.logger.log(`Config for ${tableConfig.tableName}: retentionDays=${tableConfig.retentionDays}, preCreateDays=${tableConfig.preCreateDays}, cleanupAction=${tableConfig.cleanupAction}`);
-            
+
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - tableConfig.retentionDays);
 
@@ -169,8 +174,8 @@ export class PartitionService {
     }
 
     /**
-   * Get partitions older than date
-   */
+     * Get partitions older than date
+     */
     private async getPartitionsOlderThan(tableName: string, date: Date) {
         const dateStr = this.formatDate(date);
         const targetPartitionName = `p_${dateStr.replace(/-/g, '')}`;
@@ -193,7 +198,7 @@ export class PartitionService {
 
         // Filter partitions older than or equal to target date
         const oldPartitions = allPartitions.filter(p => p.partition_name <= targetPartitionName);
-        
+
         this.logger.log(`Filtered old partitions: ${oldPartitions.map(p => p.partition_name).join(', ') || 'none'}`);
 
         return oldPartitions;
@@ -203,18 +208,24 @@ export class PartitionService {
    * Drop partition
    */
     async dropPartition(tableName: string, partitionName: string): Promise<void> {
+        const escapedTable = await this.validateAndEscapeTableName(tableName);
+        const escapedPartition = this.escapeIdentifier(partitionName);
+
         await this.dataSource.query(
-            `ALTER TABLE ${tableName} DROP PARTITION ${partitionName}`
+            `ALTER TABLE ${escapedTable} DROP PARTITION ${escapedPartition}`
         );
         this.logger.warn(`🗑️  Dropped partition ${partitionName} from ${tableName}`);
     }
 
     /**
-   * Truncate partition (keeps structure, removes data)
-   */
+     * Truncate partition (keeps structure, removes data)
+     */
     async truncatePartition(tableName: string, partitionName: string): Promise<void> {
+        const escapedTable = await this.validateAndEscapeTableName(tableName);
+        const escapedPartition = this.escapeIdentifier(partitionName);
+
         await this.dataSource.query(
-            `ALTER TABLE ${tableName} TRUNCATE PARTITION ${partitionName}`
+            `ALTER TABLE ${escapedTable} TRUNCATE PARTITION ${escapedPartition}`
         );
         this.logger.log(`🧹 Truncated partition ${partitionName} in ${tableName}`);
     }
@@ -266,6 +277,51 @@ export class PartitionService {
     private formatDate(date: Date): string {
         return date.toISOString().split('T')[0];
     }
+
+    /**
+     * Validate identifier (table/partition name) contains only safe character
+     */
+    private validateIdentifier(identifier: string, type: string = 'identifier'): void {
+        // Allow only alphanumeric, underscores, and hyphens
+        const validPattern = /^[a-zA-Z0-9_-]+$/;
+
+        if (!validPattern.test(identifier)) {
+            throw new Error(
+                `Invalid ${type}: "${identifier}". Only alphanumeric, underscore, and hyphen allowed.`
+            );
+        }
+
+        // Prevent excessively long names
+        if (identifier.length > 64) {
+            throw new Error(`${type} name too long. Maximum 64 characters.`);
+        }
+    }
+
+    /**
+     * Escapes identifier with backticks for MySQL
+     */
+    private escapeIdentifier(identifier: string): string {
+        // First validate it's safe
+        this.validateIdentifier(identifier);
+
+        // Escape any backticks and wrap in backticks
+        return `\`${identifier.replace(/`/g, '``')}\``;
+    }
+
+    /**
+     * Validates table exists and returns escaped name
+     */
+    private async validateAndEscapeTableName(tableName: string): Promise<string> {
+        this.validateIdentifier(tableName, 'table name');
+
+        const exists = await this.checkTableExists(tableName);
+        if (!exists) {
+            throw new NotFoundException(`Table ${tableName} does not exist`);
+        }
+
+        return this.escapeIdentifier(tableName);
+    }
+
 
     //////////////////////////////////////////
     //              MIGRATION               //
@@ -371,12 +427,9 @@ export class PartitionService {
     /**
      * Migrate existing table to partitioned table
      */
-    async migrateTableToPartitions(
-        tableName: string,
-        retentionDays: number = 30,
-        preCreateDays: number = 7,
-        cleanupAction: 'DROP' | 'TRUNCATE' = 'DROP'
-    ) {
+    async migrateTableToPartitions(tableName: string, retentionDays: number = 30, preCreateDays: number = 7, cleanupAction: 'DROP' | 'TRUNCATE' = 'DROP') {
+        const escapedTable = await this.validateAndEscapeTableName(tableName);
+
         this.logger.log(`Starting migration for table: ${tableName}`);
 
         // Step 1: Analyze table
@@ -401,7 +454,7 @@ export class PartitionService {
 
             // Add as regular column, not generated
             await this.dataSource.query(
-                `ALTER TABLE ${tableName} 
+                `ALTER TABLE ${escapedTable} 
                 ADD COLUMN partition_date DATE NOT NULL
                 COMMENT 'Partition key based on updatedDate'`
             );
@@ -409,34 +462,34 @@ export class PartitionService {
             // Populate with values from updatedDate
             this.logger.log(`Populating partition_date from updatedDate in ${tableName}`);
             await this.dataSource.query(
-                `UPDATE ${tableName} SET partition_date = DATE(updatedDate)`
+                `UPDATE ${escapedTable} SET partition_date = DATE(updatedDate)`
             );
 
             // Add index for performance
             await this.dataSource.query(
-                `ALTER TABLE ${tableName} ADD INDEX idx_partition_date (partition_date)`
+                `ALTER TABLE ${escapedTable} ADD INDEX idx_partition_date (partition_date)`
             );
         } else if (partitionDateColumn.generation_expression) {
             // Column exists but is a GENERATED column - need to recreate it
             this.logger.log(`Recreating partition_date column in ${tableName} (was generated, needs to be regular)`);
-            
+
             await this.dataSource.query(
-                `ALTER TABLE ${tableName} DROP COLUMN partition_date`
+                `ALTER TABLE ${escapedTable} DROP COLUMN partition_date`
             );
-            
+
             await this.dataSource.query(
-                `ALTER TABLE ${tableName} 
+                `ALTER TABLE ${escapedTable} 
                 ADD COLUMN partition_date DATE NOT NULL
                 COMMENT 'Partition key based on updatedDate'`
             );
-            
+
             this.logger.log(`Populating partition_date from updatedDate in ${tableName}`);
             await this.dataSource.query(
-                `UPDATE ${tableName} SET partition_date = DATE(updatedDate)`
+                `UPDATE ${escapedTable} SET partition_date = DATE(updatedDate)`
             );
-            
+
             await this.dataSource.query(
-                `ALTER TABLE ${tableName} ADD INDEX idx_partition_date (partition_date)`
+                `ALTER TABLE ${escapedTable} ADD INDEX idx_partition_date (partition_date)`
             );
         } else {
             this.logger.log(`partition_date column already exists in ${tableName}`);
@@ -445,11 +498,11 @@ export class PartitionService {
         // Step 3: Get current primary key
         const [pkInfo] = await this.dataSource.query(
             `SELECT column_name 
-     FROM information_schema.key_column_usage
-     WHERE table_schema = DATABASE()
-     AND table_name = ?
-     AND constraint_name = 'PRIMARY'
-     ORDER BY ordinal_position`,
+            FROM information_schema.key_column_usage
+            WHERE table_schema = DATABASE()
+            AND table_name = ?
+            AND constraint_name = 'PRIMARY'
+            ORDER BY ordinal_position`,
             [tableName]
         );
 
@@ -458,11 +511,11 @@ export class PartitionService {
 
         const pkColumns = await this.dataSource.query(
             `SELECT column_name 
-     FROM information_schema.key_column_usage
-     WHERE table_schema = DATABASE()
-     AND table_name = ?
-     AND constraint_name = 'PRIMARY'
-     ORDER BY ordinal_position`,
+            FROM information_schema.key_column_usage
+            WHERE table_schema = DATABASE()
+            AND table_name = ?
+            AND constraint_name = 'PRIMARY'
+            ORDER BY ordinal_position`,
             [tableName]
         );
 
@@ -472,9 +525,9 @@ export class PartitionService {
         if (!pkColumnNames.includes('partition_date')) {
             this.logger.log(`Adding partition_date to primary key of ${tableName}`);
             await this.dataSource.query(
-                `ALTER TABLE ${tableName} 
-         DROP PRIMARY KEY,
-         ADD PRIMARY KEY (${pkColumnNames.join(', ')}, partition_date)`
+                `ALTER TABLE ${escapedTable} 
+                DROP PRIMARY KEY,
+                ADD PRIMARY KEY (${pkColumnNames.join(', ')}, partition_date)`
             );
         } else {
             this.logger.log(`partition_date already in primary key of ${tableName}`);
@@ -524,11 +577,45 @@ export class PartitionService {
         // Step 6: Apply partitioning
         this.logger.log(`Applying RANGE partitioning to ${tableName}`);
 
+        const validatedPartitions = partitions.map(p => {
+            // Handle both "LESS THAN (value)" and "LESS THAN MAXVALUE"
+            let match = p.match(/PARTITION\s+(\w+)\s+VALUES\s+LESS\s+THAN\s+MAXVALUE/i);
+
+            if (match) {
+                // MAXVALUE case (no parentheses)
+                const pName = match[1];
+                this.validateIdentifier(pName, 'partition name');
+                return `PARTITION ${this.escapeIdentifier(pName)} VALUES LESS THAN MAXVALUE`;
+            }
+
+            // Regular value case with parentheses
+            match = p.match(/PARTITION\s+(\w+)\s+VALUES\s+LESS\s+THAN\s+\(([^)]+)\)/i);
+
+            if (!match) {
+                throw new Error(`Invalid partition format: ${p}`);
+            }
+
+            const pName = match[1];
+            const pValue = match[2]; // e.g., "TO_DAYS('2023-01-01')" or just a number
+
+            // Validate partition name
+            this.validateIdentifier(pName, 'partition name');
+
+            // Validate the value - allow TO_DAYS function with date, or plain numbers
+            // Pattern: TO_DAYS('YYYY-MM-DD') or just digits
+            if (!/^(TO_DAYS\('\d{4}-\d{2}-\d{2}'\)|\d+)$/.test(pValue.trim())) {
+                throw new Error(`Invalid partition value: ${pValue}`);
+            }
+
+            // Reconstruct safely
+            return `PARTITION ${this.escapeIdentifier(pName)} VALUES LESS THAN (${pValue})`;
+        });
+
         await this.dataSource.query(
-            `ALTER TABLE ${tableName}
-     PARTITION BY RANGE (TO_DAYS(partition_date)) (
-       ${partitions.join(',\n       ')}
-     )`
+            `ALTER TABLE ${escapedTable}
+            PARTITION BY RANGE (TO_DAYS(partition_date)) (
+            ${validatedPartitions.join(',\n       ')}
+            )`
         );
 
         // Step 7: Add to partition_config
