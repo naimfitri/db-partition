@@ -1,10 +1,9 @@
-import { Injectable, Logger, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Repository } from 'typeorm';
 import { PartitionConfigEntity } from '../partition-config/entity/partittion-config.entity';
-
-
+import { PARTITION_CONFIG } from './partition.config';
 
 @Injectable()
 export class PartitionService {
@@ -108,7 +107,9 @@ export class PartitionService {
 
         const nextDay = new Date(date);
         nextDay.setDate(nextDay.getDate() + 1);
-        const nextDayStr = this.formatDate(nextDay);
+        nextDay.setHours(0, 0, 0, 0);
+
+        const nextDayTimestamp = Math.floor(nextDay.getTime() / 1000);
 
         // Check if p_future (MAXVALUE) partition exists
         const [futurePartition] = await this.dataSource.query(
@@ -126,7 +127,7 @@ export class PartitionService {
                 this.logger.log(`Reorganizing p_future to add ${partitionName} for ${tableName}`);
                 await this.dataSource.query(
                     `ALTER TABLE ${escapedTable} REORGANIZE PARTITION p_future INTO (
-                        PARTITION ${escapedPartition} VALUES LESS THAN (TO_DAYS('${nextDayStr}')),
+                        PARTITION ${escapedPartition} VALUES LESS THAN (${nextDayTimestamp}),
                         PARTITION p_future VALUES LESS THAN MAXVALUE
                     )`
                 );
@@ -134,12 +135,12 @@ export class PartitionService {
                 // No MAXVALUE partition, can add normally
                 await this.dataSource.query(
                     `ALTER TABLE ${escapedTable} ADD PARTITION (
-                        PARTITION ${escapedPartition} VALUES LESS THAN (TO_DAYS('${nextDayStr}'))
+                        PARTITION ${escapedPartition} VALUES LESS THAN (${nextDayTimestamp})
                     )`
                 );
             }
 
-            this.logger.log(`Created partition ${partitionName} for ${tableName}`);
+            this.logger.log(`Created partition ${partitionName} for ${tableName} (Timestamp: ${nextDayTimestamp})`);
         } catch (error) {
             if (!error.message.includes('duplicate partition')) {
                 throw error;
@@ -285,46 +286,75 @@ export class PartitionService {
    * List all partitions for a table
    */
     async listPartitions(tableName: string) {
-        // Validate table name first
-        await this.validateAndEscapeTableName(tableName);
+        try {
+            // Validate table name first
+            await this.validateAndEscapeTableName(tableName);
 
-        return await this.dataSource.query(
-            `SELECT 
-        partition_name,
-        partition_description,
-        table_rows,
-        data_length,
-        create_time
-       FROM information_schema.partitions
-       WHERE table_schema = DATABASE()
-       AND table_name = ?
-       AND partition_name IS NOT NULL
-       ORDER BY partition_name`,
-            [tableName]
-        );
+            const query = `
+                SELECT 
+                    partition_name,
+                    partition_description,
+                    table_rows,
+                    data_length,
+                    create_time
+                FROM information_schema.partitions
+                WHERE table_schema = DATABASE()
+                    AND table_name = ?
+                    AND partition_name IS NOT NULL
+                ORDER BY partition_name
+                `;
+
+            const partitions = await this.dataSource.query(query, [tableName])
+
+            this.logger.log(`Successfully retrieved ${partitions.length} partitions for table ${tableName}`);
+
+            return partitions;
+        } catch (error) {
+            this.logger.error(`Partition query failed for table ${tableName}`, error.message,);
+
+            throw new InternalServerErrorException({
+                message: error.message,
+            });
+        }
     }
+
 
     /**
    * Get partition coverage (earliest to latest)
    */
     async getPartitionCoverage(tableName: string) {
-        const partitions = await this.listPartitions(tableName);
-        const futurePartition = partitions.find(p => p.partition_name === 'p_future');
+        try {
+            const partitions = await this.listPartitions(tableName);
+            const futurePartition = partitions.find(p => p.partition_name === 'p_future');
 
-        return {
-            tableName,
-            earliestPartition: partitions[0]?.partition_name || null,
-            latestPartition: partitions[partitions.length - 2]?.partition_name || null,
-            uniquePartition: futurePartition?.partition_name || null,
-            totalPartitions: partitions.length,
-        };
+            const coverage = {
+                tableName,
+                earliestPartition: partitions[0]?.partition_name || null,
+                latestPartition: partitions[partitions.length - 2]?.partition_name || null,
+                uniquePartition: futurePartition?.partition_name || null,
+                totalPartitions: partitions.length,
+            };
+
+            this.logger.log(`Successfully retrieved partition coverage for table ${tableName}: earliest=${coverage.earliestPartition}, latest=${coverage.latestPartition}, total=${coverage.totalPartitions}`);
+
+            return coverage;
+
+        } catch (error) {
+            this.logger.error(`Failed to get partition for table ${tableName}`, error.message)
+
+            throw new InternalServerErrorException({
+                message: error.message,
+            });
+        }
+
     }
 
     /**
    * Helper: Generate partition name (p_YYYYMMDD)
    */
     private getPartitionName(date: Date): string {
-        return `p_${this.formatDate(date).replace(/-/g, '')}`;
+        const gmtDate = new Date(date.getTime() + PARTITION_CONFIG.TIMEZONE_OFFSET_MS);
+        return `p_${this.formatDate(gmtDate).replace(/-/g, '')}`;
     }
 
     /**
@@ -343,85 +373,106 @@ export class PartitionService {
      * Analyze existing table for partition migration
      */
     async analyzeTableForMigration(tableName: string) {
-        // Check if table exists
-        const tableExists = await this.checkTableExists(tableName);
-        if (!tableExists) {
-            throw new NotFoundException(`Table ${tableName} does not exist`);
+        try {
+            const escapedTable = await this.validateAndEscapeTableName(tableName);
+            // Check if table exists
+            const tableExists = await this.checkTableExists(tableName);
+            if (!tableExists) {
+                throw new NotFoundException(`Table ${tableName} does not exist`);
+            }
+
+            // Get table info
+            const [tableInfo] = await this.dataSource.query(
+                `SELECT 
+            table_rows as estimated_rows,
+            data_length as data_size_bytes,
+            index_length as index_size_bytes
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+            AND table_name = ?`,
+                [tableName]
+            );
+
+            // Check if updatedDate column exists
+            const [columnInfo] = await this.dataSource.query(
+                `SELECT 
+            column_name,
+            data_type,
+            column_type
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+            AND table_name = ?
+            AND column_name = 'updatedDate'`,
+                [tableName]
+            );
+
+            if (!columnInfo) {
+                throw new NotFoundException(`Column 'updatedDate' not found in table ${tableName}`);
+            }
+
+            // Get date range from updatedDate
+            // const [dateRange] = await this.dataSource.query(
+            //     `SELECT 
+            // MIN(DATE(updatedDate)) as earliest_date,
+            // MAX(DATE(updatedDate)) as latest_date,
+            // COUNT(*) as actual_rows,
+            // COUNT(DISTINCT DATE(updatedDate)) as unique_dates
+            // FROM ${escapedTable}`
+            // );
+
+            const [dateRange] = await this.dataSource.query(
+                `SELECT 
+                DATE_FORMAT(MIN(updatedDate), '%Y-%m-%d %H:%i:%s') as earliest_date,
+                DATE_FORMAT(MAX(updatedDate), '%Y-%m-%d %H:%i:%s') as latest_date,
+                COUNT(*) as actual_rows,
+                COUNT(DISTINCT DATE(updatedDate)) as unique_dates
+                FROM ${escapedTable}`
+            );
+
+            // Check if already partitioned
+            const [partitionInfo] = await this.dataSource.query(
+                `SELECT 
+            partition_name,
+            partition_method
+            FROM information_schema.partitions
+            WHERE table_schema = DATABASE()
+            AND table_name = ?
+            LIMIT 1`,
+                [tableName]
+            );
+
+            const analyze = {
+                tableName,
+                isPartitioned: !!partitionInfo?.partition_name,
+                columnInfo: {
+                    name: 'updatedDate',
+                    type: columnInfo.data_type,
+                    fullType: columnInfo.column_type
+                },
+                tableStats: {
+                    estimatedRows: Number(tableInfo.estimated_rows), // Force to Number
+                    actualRows: Number(dateRange.actual_rows),       // Force to Number
+                    dataSizeMB: Math.round(tableInfo.data_size_bytes / 1024 / 1024 * 100) / 100,
+                    indexSizeMB: Math.round(tableInfo.index_size_bytes / 1024 / 1024 * 100) / 100
+                },
+                dateRange: {
+                    earliestDate: dateRange.earliest_date, // This will now be "2025-12-15 00:00:00"
+                    latestDate: dateRange.latest_date,     // This will now be "2026-01-03 00:00:00"
+                    uniqueDates: Number(dateRange.unique_dates),
+                    spanDays: Number(dateRange.unique_dates)
+                },
+                estimatedMigrationTime: this.estimateMigrationTime(dateRange.actual_rows)
+            };
+
+            this.logger.log(`Successfully analyzed table ${tableName}: ${analyze.tableStats.actualRows} rows, date range ${analyze.dateRange.earliestDate} to ${analyze.dateRange.latestDate}`);
+
+            return analyze;
+        } catch (error) {
+            this.logger.error(`Failed to analyze table ${tableName}`, error.message);
+            throw new InternalServerErrorException({
+                message: error.message,
+            });
         }
-
-        // Get table info
-        const [tableInfo] = await this.dataSource.query(
-            `SELECT 
-      table_rows as estimated_rows,
-      data_length as data_size_bytes,
-      index_length as index_size_bytes
-     FROM information_schema.tables
-     WHERE table_schema = DATABASE()
-     AND table_name = ?`,
-            [tableName]
-        );
-
-        // Check if updatedDate column exists
-        const [columnInfo] = await this.dataSource.query(
-            `SELECT 
-      column_name,
-      data_type,
-      column_type
-     FROM information_schema.columns
-     WHERE table_schema = DATABASE()
-     AND table_name = ?
-     AND column_name = 'updatedDate'`,
-            [tableName]
-        );
-
-        if (!columnInfo) {
-            throw new NotFoundException(`Column 'updatedDate' not found in table ${tableName}`);
-        }
-
-        // Get date range from updatedDate
-        const [dateRange] = await this.dataSource.query(
-            `SELECT 
-      MIN(DATE(updatedDate)) as earliest_date,
-      MAX(DATE(updatedDate)) as latest_date,
-      COUNT(*) as actual_rows,
-      COUNT(DISTINCT DATE(updatedDate)) as unique_dates
-     FROM ${tableName}`
-        );
-
-        // Check if already partitioned
-        const [partitionInfo] = await this.dataSource.query(
-            `SELECT 
-      partition_name,
-      partition_method
-     FROM information_schema.partitions
-     WHERE table_schema = DATABASE()
-     AND table_name = ?
-     LIMIT 1`,
-            [tableName]
-        );
-
-        return {
-            tableName,
-            isPartitioned: !!partitionInfo?.partition_name,
-            columnInfo: {
-                name: 'updatedDate',
-                type: columnInfo.data_type,
-                fullType: columnInfo.column_type
-            },
-            tableStats: {
-                estimatedRows: tableInfo.estimated_rows,
-                actualRows: dateRange.actual_rows,
-                dataSizeMB: Math.round(tableInfo.data_size_bytes / 1024 / 1024 * 100) / 100,
-                indexSizeMB: Math.round(tableInfo.index_size_bytes / 1024 / 1024 * 100) / 100
-            },
-            dateRange: {
-                earliestDate: dateRange.earliest_date,
-                latestDate: dateRange.latest_date,
-                uniqueDates: dateRange.unique_dates,
-                spanDays: dateRange.unique_dates
-            },
-            estimatedMigrationTime: this.estimateMigrationTime(dateRange.actual_rows)
-        };
     }
 
     /**
@@ -467,12 +518,7 @@ export class PartitionService {
 
         // If updatedDate is TIMESTAMP, convert it to DATE for partitioning
         if (updatedDateColumn.data_type === 'timestamp') {
-            this.logger.log(`Converting updatedDate from TIMESTAMP to DATE in ${tableName}`);
-            await this.dataSource.query(
-                `ALTER TABLE ${escapedTable} 
-                MODIFY COLUMN updatedDate DATE NOT NULL
-                COMMENT 'Updated date - also used as partition key'`
-            );
+            this.logger.log(`updatedDate is TIMESTAMP - will use DATE extraction for partitioning in ${tableName}`);
         }
 
         // Add index on updatedDate for performance
@@ -529,10 +575,17 @@ export class PartitionService {
         // Step 5: Create partitions for existing data range
         this.logger.log(`Creating partitions for date range: ${analysis.dateRange.earliestDate} to ${analysis.dateRange.latestDate}`);
 
+
+        const parseDbDate = (dateStr: string) => {
+            // Split "2025-12-15 00:00:00" into [2025, 12, 15]
+            const [datePart] = dateStr.split(' ');
+            const [year, month, day] = datePart.split('-').map(Number);
+            // Create a date using local time values (month is 0-indexed in JS)
+            return new Date(year, month - 1, day, 0, 0, 0, 0);
+        };
+
         const startDate = new Date(analysis.dateRange.earliestDate);
         const endDate = new Date(analysis.dateRange.latestDate);
-
-
 
         // Create historical partition for old data
         // const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${this.formatDate(startDate)}'))`];
@@ -541,14 +594,23 @@ export class PartitionService {
 
         // Create daily partitions
         const currentDate = new Date(startDate);
+        currentDate.setHours(0, 0, 0, 0);
+
         while (currentDate <= endDate) {
-            const partitionDate = this.formatDate(currentDate);
-            const nextDate = new Date(currentDate);
-            nextDate.setDate(nextDate.getDate() + 1);
-            const nextDateStr = this.formatDate(nextDate);
+            // const partitionSuffix = this.formatDate(currentDate).replace(/-/g, '');
+            const partitionSuffix = this.formatDate(new Date(currentDate.getTime() + PARTITION_CONFIG.TIMEZONE_OFFSET_MS)).replace(/-/g, '');
+
+            // const partitionDate = this.formatDate(currentDate);
+            const nextDay = new Date(currentDate);
+            nextDay.setDate(nextDay.getDate() + 1);
+            nextDay.setHours(0, 0, 0, 0);
+
+            const nextDayTimestamp = Math.floor(nextDay.getTime() / 1000);
+
+            // const nextDateStr = this.formatDate(nextDate);
 
             partitions.push(
-                `PARTITION p_${partitionDate.replace(/-/g, '')} VALUES LESS THAN (TO_DAYS('${nextDateStr}'))`
+                `PARTITION p_${partitionSuffix} VALUES LESS THAN (${nextDayTimestamp})`
             );
 
             currentDate.setDate(currentDate.getDate() + 1);
@@ -558,13 +620,21 @@ export class PartitionService {
         for (let i = 1; i <= preCreateDays; i++) {
             const futureDate = new Date(endDate);
             futureDate.setDate(futureDate.getDate() + i);
-            const partitionDate = this.formatDate(futureDate);
-            const nextDate = new Date(futureDate);
-            nextDate.setDate(nextDate.getDate() + 1);
-            const nextDateStr = this.formatDate(nextDate);
+            futureDate.setHours(0, 0, 0, 0);
+
+            // const partitionSuffix = this.formatDate(futureDate).replace(/-/g, '');
+            const partitionSuffix = this.formatDate(new Date(futureDate.getTime() + PARTITION_CONFIG.TIMEZONE_OFFSET_MS)).replace(/-/g, '');
+            // const partitionDate = this.formatDate(futureDate);
+            const nextDay = new Date(futureDate);
+            nextDay.setDate(nextDay.getDate() + 1);
+            nextDay.setHours(0, 0, 0, 0);
+
+            const nextDayTimeStamp = Math.floor(nextDay.getTime() / 1000);
+
+            // const nextDateStr = this.formatDate(nextDate);
 
             partitions.push(
-                `PARTITION p_${partitionDate.replace(/-/g, '')} VALUES LESS THAN (TO_DAYS('${nextDateStr}'))`
+                `PARTITION p_${partitionSuffix} VALUES LESS THAN (${nextDayTimeStamp})`
             );
         }
 
@@ -594,15 +664,15 @@ export class PartitionService {
             }
 
             const pName = match[1];
-            const pValue = match[2]; // e.g., "TO_DAYS('2023-01-01')" or just a number
+            const pValue = match[2].trim(); // e.g., "TO_DAYS('2023-01-01')" or just a number
 
             // Validate partition name
             this.validateIdentifier(pName, 'partition name');
 
-            // Validate the value - allow TO_DAYS function with date, or plain numbers
-            // Pattern: TO_DAYS('YYYY-MM-DD') or just digits
-            if (!/^(TO_DAYS\('\d{4}-\d{2}-\d{2}'\)|\d+)$/.test(pValue.trim())) {
-                throw new Error(`Invalid partition value: ${pValue}`);
+            // UPDATED VALIDATION: 
+            // We now strictly allow digits (Unix Timestamps) or the legacy TO_DAYS for backward compatibility
+            if (!/^(\d+|TO_DAYS\('\d{4}-\d{2}-\d{2}'\))$/.test(pValue)) {
+                throw new Error(`Invalid partition value: ${pValue}. Expected a Unix timestamp (integer).`);
             }
 
             // Reconstruct safely
@@ -611,7 +681,7 @@ export class PartitionService {
 
         await this.dataSource.query(
             `ALTER TABLE ${escapedTable}
-            PARTITION BY RANGE (TO_DAYS(updatedDate)) (
+            PARTITION BY RANGE (UNIX_TIMESTAMP(updatedDate)) (
             ${validatedPartitions.join(',\n       ')}
             )`
         );

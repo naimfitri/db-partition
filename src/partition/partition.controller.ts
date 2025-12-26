@@ -5,6 +5,7 @@ import { PartitionScheduler } from './partition.scheduler';
 import { TruncatePartitionDto } from './dto/truncate-partition.dto';
 // import { CreatePartitionConfigDto, UpdatePartitionConfigDto, PartitionConfigResponseDto } from './dto/create-partition-config.dto';
 import { MigrateTableDto } from './dto/migrate-tabe.dto';
+import { DropPartitionDto } from './dto/drop-partition.dto';
 
 @ApiTags('partitions')
 @Controller('partitions')
@@ -156,7 +157,7 @@ export class PartitionController {
         status: 404,
         description: 'Partition not found'
     })
-    async dropPartition(@Body() dto: TruncatePartitionDto) {
+    async dropPartition(@Body() dto: DropPartitionDto) {
         const date = new Date(dto.partitionDate);
         const partitionName = `p_${dto.partitionDate.replace(/-/g, '')}`;
 
