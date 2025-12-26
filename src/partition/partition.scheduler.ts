@@ -3,6 +3,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { CronJob } from 'cron';
 import { PartitionService } from './partition.service';
+import cronstrue from 'cronstrue';
 
 @Injectable()
 export class PartitionScheduler implements OnModuleInit {
@@ -37,8 +38,9 @@ export class PartitionScheduler implements OnModuleInit {
     } else {
       this.logger.log('Initializing partition manager timezone to UTC')
     }
-    
-    this.logger.log(`Partition cron schedule: ${this.cronSchedule}`);
+
+    const humanReadable = cronstrue.toString(this.cronSchedule);
+    this.logger.log(`Partition cron schedule: ${humanReadable}`);
     
     try {
       await this.partitionService.ensureFuturePartitions();
