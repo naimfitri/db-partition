@@ -36,7 +36,7 @@ import { GeneratorModule } from './generator/generator.module';
         password: config.get('database.password'),
         database: config.get('database.database'),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false, // ⚠️ Never use in production - partitions managed manually
+        synchronize: false, 
         migrationsRun: false,
         logging: false,
       }),
