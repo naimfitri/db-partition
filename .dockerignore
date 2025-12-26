@@ -2,7 +2,9 @@
 node_modules
 npm-debug.log
 yarn-error.log
-package-lock.json
+
+# Keep package-lock.json for reproducible builds
+# package-lock.json
 yarn.lock
 
 # Git
@@ -27,14 +29,8 @@ coverage
 .jest
 jest.config.js
 
-# Source files (excluded in runtime, included via dist/)
-src
-
-# Config files (unless needed)
-tsconfig.json
-tsconfig.build.json
+# Config files that are NOT needed (keep build config files!)
 eslint.config.mjs
-nest-cli.json
 
 # K8s and other infrastructure
 k8s
@@ -48,7 +44,7 @@ k8s
 .github
 .gitlab-ci.yml
 
-# Others
+# Docker files
 .dockerignore
 Dockerfile
 docker-compose.yml
