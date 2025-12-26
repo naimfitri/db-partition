@@ -54,10 +54,22 @@ DB_USERNAME=your_username
 DB_PASSWORD=your_password
 DB_DATABASE=your_database
 
-# Partition Configuration
-PARTITION_RETENTION_DAYS=30
-PARTITION_ADVANCE_DAYS=7
+# Partition Management
+PARTITION_ENABLED=true
+PARTITION_CRON=0 3 * * *
+
+# Partition Timezone (28800 for GMT+8 / 0 for UTC)
+PARTITION_TIMEZONE_OFFSET_MS=28800
 ```
+## Cron Scheduling Format
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| Minute | 0 | At the 0th minute |
+| Hour | 2 | At 2 AM |
+| Day of Month | * | Every day |
+| Month | * | Every month |
+| Day of Week | * | Every day of the week |
 
 ## Running the Application
 
