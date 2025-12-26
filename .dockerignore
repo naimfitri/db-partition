@@ -1,0 +1,54 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# Documentation
+README.md
+CHANGELOG.md
+
+# Testing
+test
+coverage
+.jest
+jest.config.js
+
+# Source files (excluded in runtime, included via dist/)
+src
+
+# Config files (unless needed)
+tsconfig.json
+tsconfig.build.json
+eslint.config.mjs
+nest-cli.json
+
+# K8s and other infrastructure
+k8s
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Others
+.dockerignore
+Dockerfile
+docker-compose.yml
