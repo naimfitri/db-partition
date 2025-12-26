@@ -1,18 +1,22 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { CronJob } from 'cron';
 import { PartitionService } from './partition.service';
 
 @Injectable()
 export class PartitionScheduler implements OnModuleInit {
   private readonly logger = new Logger(PartitionScheduler.name);
   private readonly enabled: boolean;
+  private readonly cronSchedule: string;
 
   constructor(
     private partitionService: PartitionService,
     private configService: ConfigService,
+    private schedulerRegistry: SchedulerRegistry,
   ) {
     this.enabled = this.configService.get('partition.enabled') || false;
+    this.cronSchedule = this.configService.get('partition.cronSchedule') || '0 2 * * *';
   }
 
   /**
@@ -25,6 +29,7 @@ export class PartitionScheduler implements OnModuleInit {
     }
 
     this.logger.log('Initializing partition manager...');
+    this.logger.log(`Partition cron schedule: ${this.cronSchedule}`);
     
     try {
       await this.partitionService.ensureFuturePartitions();
@@ -33,13 +38,29 @@ export class PartitionScheduler implements OnModuleInit {
       this.logger.error('Startup partition check failed', error);
       // Don't crash the app, but log prominently
     }
+
+    // Set up dynamic cron job
+    this.setupCronJob();
+  }
+
+  /**
+   * Setup cron job with schedule from environment variable
+   */
+  private setupCronJob() {
+    const job = new CronJob(this.cronSchedule, () => {
+      this.handleDailyPartitionMaintenance();
+    });
+
+    this.schedulerRegistry.addCronJob('partition-maintenance', job);
+    job.start();
+
+    this.logger.log(`Partition maintenance cron job registered with schedule: ${this.cronSchedule}`);
   }
 
   /**
    * Daily cron: Create future partitions + cleanup old ones
-   * Runs at 2 AM by default (configurable)
+   * Schedule is configurable via PARTITION_CRON env variable (default: 0 2 * * * = 2 AM daily)ss
    */
-  @Cron(CronExpression.EVERY_DAY_AT_2AM)
   async handleDailyPartitionMaintenance() {
     if (!this.enabled) return;
 
