@@ -302,11 +302,13 @@ export class PartitionService {
    */
     async getPartitionCoverage(tableName: string) {
         const partitions = await this.listPartitions(tableName);
+        const futurePartition = partitions.find(p => p.partition_name === 'p_future');
 
         return {
             tableName,
             earliestPartition: partitions[0]?.partition_name || null,
-            latestPartition: partitions[partitions.length - 1]?.partition_name || null,
+            latestPartition: partitions[partitions.length - 2]?.partition_name || null,
+            uniquePartition: futurePartition?.partition_name || null,
             totalPartitions: partitions.length,
         };
     }

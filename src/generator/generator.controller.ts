@@ -1,5 +1,5 @@
-import { Controller, Post, Get, Delete, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Get, Delete, Put, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { GeneratorService } from './generator.service';
 
 @ApiTags('generator')
@@ -21,6 +21,17 @@ export class GeneratorController {
   @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
   async getStats() {
     return this.generatorService.getTestDataStats();
+  }
+
+  @Put('update')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update random test records with new data and current date' })
+  @ApiQuery({ name: 'count', required: false, type: Number, description: 'Number of records to update (default: 100)' })
+  @ApiResponse({ status: 200, description: 'Test data updated successfully' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async updateTestData(@Query('count') count?: number) {
+    const updateCount = count ? parseInt(count.toString(), 10) : 100;
+    return this.generatorService.updateTestData(updateCount);
   }
 
   @Delete('clear')

@@ -49,6 +49,7 @@ export class GeneratorService {
               updatedDate: currentDate,
               createdDate: currentDate,
             });
+            // partition_date is automatically set from updatedDate via @BeforeInsert hook
             batch.push(record);
           }
 
@@ -114,6 +115,50 @@ export class GeneratorService {
       };
     } catch (error) {
       this.logger.error('Error clearing test data', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Updates random records with new random data and updatedDate
+   * partition_date is automatically updated via entity hooks
+   */
+  async updateTestData(count: number = 100): Promise<{ success: boolean; message: string; recordsUpdated: number }> {
+    this.logger.log(`Updating ${count} random records`);
+    try {
+      // Get random records to update
+      const records = await this.testingRepository
+        .createQueryBuilder('testing')
+        .orderBy('RAND()')
+        .limit(count)
+        .getMany();
+
+      if (records.length === 0) {
+        return {
+          success: true,
+          message: 'No records found to update',
+          recordsUpdated: 0,
+        };
+      }
+
+      // Update records with new data
+      // partition_date will be automatically updated via @BeforeUpdate hook
+      for (const record of records) {
+        record.randname = this.generateRandomName();
+        record.randnumb = this.generateRandomNumber();
+        record.updatedDate = new Date(); // This triggers partition_date update
+      }
+
+      await this.testingRepository.save(records);
+
+      this.logger.log(`Successfully updated ${records.length} records`);
+      return {
+        success: true,
+        message: `Successfully updated ${records.length} records`,
+        recordsUpdated: records.length,
+      };
+    } catch (error) {
+      this.logger.error('Error updating test data', error);
       throw error;
     }
   }
