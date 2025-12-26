@@ -81,6 +81,7 @@ export class PartitionController {
                 tableName: 'event_logs',
                 earliestPartition: 'p_20251201',
                 latestPartition: 'p_20251231',
+                uniquePartition: 'p_future',
                 totalPartitions: 30
             }
         }

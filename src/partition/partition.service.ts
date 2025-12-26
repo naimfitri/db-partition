@@ -22,13 +22,13 @@ export class PartitionService {
     private validateIdentifier(identifier: string, type: string = 'identifier'): void {
         // Allow only alphanumeric, underscores, and hyphens
         const validPattern = /^[a-zA-Z0-9_-]+$/;
-        
+
         if (!validPattern.test(identifier)) {
             throw new Error(
                 `Invalid ${type}: "${identifier}". Only alphanumeric, underscore, and hyphen allowed.`
             );
         }
-        
+
         // Prevent excessively long names
         if (identifier.length > 64) {
             throw new Error(`${type} name too long. Maximum 64 characters.`);
@@ -41,7 +41,7 @@ export class PartitionService {
     private escapeIdentifier(identifier: string): string {
         // First validate it's safe
         this.validateIdentifier(identifier);
-        
+
         // Escape any backticks and wrap in backticks
         return `\`${identifier.replace(/`/g, '``')}\``;
     }
@@ -51,12 +51,12 @@ export class PartitionService {
      */
     private async validateAndEscapeTableName(tableName: string): Promise<string> {
         this.validateIdentifier(tableName, 'table name');
-        
+
         const exists = await this.checkTableExists(tableName);
         if (!exists) {
             throw new NotFoundException(`Table ${tableName} does not exist`);
         }
-        
+
         return this.escapeIdentifier(tableName);
     }
 
@@ -151,21 +151,25 @@ export class PartitionService {
      * Create partitions N days ahead
      */
     async ensureFuturePartitions(): Promise<void> {
-
         const configs = await this.getActiveConfigs();
 
-        for (const tableConfig of configs) {
-            const today = new Date();
+        // Process all tables in parallel
+        await Promise.all(
+            configs.map(tableConfig => this.processTablePartitions(tableConfig))
+        );
+    }
 
-            for (let i = 0; i <= tableConfig.preCreateDays; i++) {
-                const targetDate = new Date(today);
-                targetDate.setDate(targetDate.getDate() + i);
+    private async processTablePartitions(tableConfig: PartitionConfigEntity): Promise<void> {
+        const today = new Date();
 
-                const exist = await this.partitionExists(tableConfig.tableName, targetDate);
+        for (let i = 0; i <= tableConfig.preCreateDays; i++) {
+            const targetDate = new Date(today);
+            targetDate.setDate(targetDate.getDate() + i);
 
-                if (!exist) {
-                    await this.createPartition(tableConfig.tableName, targetDate);
-                }
+            const exist = await this.partitionExists(tableConfig.tableName, targetDate);
+
+            if (!exist) {
+                await this.createPartition(tableConfig.tableName, targetDate);
             }
         }
     }
@@ -189,30 +193,33 @@ export class PartitionService {
      * Cleanup old partitions based on retention
      */
     async cleanupOldPartitions(): Promise<void> {
-
         const configs = await this.getActiveConfigs();
 
-        for (const tableConfig of configs) {
-            this.logger.log(`Config for ${tableConfig.tableName}: retentionDays=${tableConfig.retentionDays}, preCreateDays=${tableConfig.preCreateDays}, cleanupAction=${tableConfig.cleanupAction}`);
+        await Promise.all(
+            configs.map(tableConfig => this.processCleanupOldPartitions(tableConfig))
+        )
+    }
 
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - tableConfig.retentionDays);
+    private async processCleanupOldPartitions(tableConfig: PartitionConfigEntity): Promise<void> {
+        this.logger.log(`Config for ${tableConfig.tableName}: retentionDays=${tableConfig.retentionDays}, preCreateDays=${tableConfig.preCreateDays}, cleanupAction=${tableConfig.cleanupAction}`);
 
-            this.logger.log(`Checking old partitions for ${tableConfig.tableName}, cutoff date: ${this.formatDate(cutoffDate)}`);
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - tableConfig.retentionDays);
 
-            const oldPartitions = await this.getPartitionsOlderThan(
-                tableConfig.tableName,
-                cutoffDate
-            );
+        this.logger.log(`Checking old partitions for ${tableConfig.tableName}, cutoff date: ${this.formatDate(cutoffDate)}`);
 
-            this.logger.log(`Found ${oldPartitions.length} old partitions to ${tableConfig.cleanupAction}`);
+        const oldPartitions = await this.getPartitionsOlderThan(
+            tableConfig.tableName,
+            cutoffDate
+        );
 
-            for (const partition of oldPartitions) {
-                if (tableConfig.cleanupAction === 'DROP') {
-                    await this.dropPartition(tableConfig.tableName, partition.partition_name);
-                } else {
-                    await this.truncatePartition(tableConfig.tableName, partition.partition_name);
-                }
+        this.logger.log(`Found ${oldPartitions.length} old partitions to ${tableConfig.cleanupAction}`);
+
+        for (const partition of oldPartitions) {
+            if (tableConfig.cleanupAction === 'DROP') {
+                await this.dropPartition(tableConfig.tableName, partition.partition_name);
+            } else {
+                await this.truncatePartition(tableConfig.tableName, partition.partition_name);
             }
         }
     }
@@ -280,7 +287,7 @@ export class PartitionService {
     async listPartitions(tableName: string) {
         // Validate table name first
         await this.validateAndEscapeTableName(tableName);
-        
+
         return await this.dataSource.query(
             `SELECT 
         partition_name,
@@ -531,7 +538,7 @@ export class PartitionService {
         // const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${this.formatDate(startDate)}'))`];
 
         const partitions: string[] = [];
-        
+
         // Create daily partitions
         const currentDate = new Date(startDate);
         while (currentDate <= endDate) {
