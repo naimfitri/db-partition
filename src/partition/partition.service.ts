@@ -442,60 +442,41 @@ export class PartitionService {
             throw new ConflictException(`Table ${tableName} is already partitioned`);
         }
 
-        // Step 2: Add partition_date column (if not exists)
-        const [partitionDateColumn] = await this.dataSource.query(
-            `SELECT column_name, generation_expression, extra
+        // Step 2: Verify updatedDate column exists and is correct type
+        const [updatedDateColumn] = await this.dataSource.query(
+            `SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_schema = DATABASE()
             AND table_name = ?
-            AND column_name = 'partition_date'`,
+            AND column_name = 'updatedDate'`,
             [tableName]
         );
 
-        if (!partitionDateColumn) {
-            this.logger.log(`Adding partition_date column to ${tableName}`);
+        if (!updatedDateColumn) {
+            throw new NotFoundException(`Column 'updatedDate' not found in table ${tableName}`);
+        }
 
-            // Add as regular column, not generated
+        // If updatedDate is TIMESTAMP, convert it to DATE for partitioning
+        if (updatedDateColumn.data_type === 'timestamp') {
+            this.logger.log(`Converting updatedDate from TIMESTAMP to DATE in ${tableName}`);
             await this.dataSource.query(
                 `ALTER TABLE ${escapedTable} 
-                ADD COLUMN partition_date DATE NOT NULL
-                COMMENT 'Partition key based on updatedDate'`
+                MODIFY COLUMN updatedDate DATE NOT NULL
+                COMMENT 'Updated date - also used as partition key'`
             );
+        }
 
-            // Populate with values from updatedDate
-            this.logger.log(`Populating partition_date from updatedDate in ${tableName}`);
+        // Add index on updatedDate for performance
+        this.logger.log(`Ensuring index on updatedDate in ${tableName}`);
+        try {
             await this.dataSource.query(
-                `UPDATE ${escapedTable} SET partition_date = DATE(updatedDate)`
+                `ALTER TABLE ${escapedTable} ADD INDEX idx_updatedDate (updatedDate)`
             );
-
-            // Add index for performance
-            await this.dataSource.query(
-                `ALTER TABLE ${escapedTable} ADD INDEX idx_partition_date (partition_date)`
-            );
-        } else if (partitionDateColumn.generation_expression) {
-            // Column exists but is a GENERATED column - need to recreate it
-            this.logger.log(`Recreating partition_date column in ${tableName} (was generated, needs to be regular)`);
-
-            await this.dataSource.query(
-                `ALTER TABLE ${escapedTable} DROP COLUMN partition_date`
-            );
-
-            await this.dataSource.query(
-                `ALTER TABLE ${escapedTable} 
-                ADD COLUMN partition_date DATE NOT NULL
-                COMMENT 'Partition key based on updatedDate'`
-            );
-
-            this.logger.log(`Populating partition_date from updatedDate in ${tableName}`);
-            await this.dataSource.query(
-                `UPDATE ${escapedTable} SET partition_date = DATE(updatedDate)`
-            );
-
-            await this.dataSource.query(
-                `ALTER TABLE ${escapedTable} ADD INDEX idx_partition_date (partition_date)`
-            );
-        } else {
-            this.logger.log(`partition_date column already exists in ${tableName}`);
+        } catch (error) {
+            // Index might already exist, ignore duplicate key name error
+            if (!error.message.includes('Duplicate key name')) {
+                throw error;
+            }
         }
 
         // Step 3: Get current primary key
@@ -524,16 +505,16 @@ export class PartitionService {
 
         const pkColumnNames = pkColumns.map(col => col.column_name);
 
-        // Only update primary key if partition_date is not already in it
-        if (!pkColumnNames.includes('partition_date')) {
-            this.logger.log(`Adding partition_date to primary key of ${tableName}`);
+        // Only update primary key if updatedDate is not already in it
+        if (!pkColumnNames.includes('updatedDate')) {
+            this.logger.log(`Adding updatedDate to primary key of ${tableName}`);
             await this.dataSource.query(
                 `ALTER TABLE ${escapedTable} 
                 DROP PRIMARY KEY,
-                ADD PRIMARY KEY (${pkColumnNames.join(', ')}, partition_date)`
+                ADD PRIMARY KEY (${pkColumnNames.join(', ')}, updatedDate)`
             );
         } else {
-            this.logger.log(`partition_date already in primary key of ${tableName}`);
+            this.logger.log(`updatedDate already in primary key of ${tableName}`);
         }
 
         // Step 5: Create partitions for existing data range
@@ -621,7 +602,7 @@ export class PartitionService {
 
         await this.dataSource.query(
             `ALTER TABLE ${escapedTable}
-            PARTITION BY RANGE (TO_DAYS(partition_date)) (
+            PARTITION BY RANGE (TO_DAYS(updatedDate)) (
             ${validatedPartitions.join(',\n       ')}
             )`
         );

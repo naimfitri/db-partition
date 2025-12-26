@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
 
 @Entity('testing')
 export class Testing {
@@ -11,7 +11,7 @@ export class Testing {
   @Column({ type: 'int' })
   randnumb: number;
 
-  @UpdateDateColumn({ type: 'timestamp' })
+  @Column({ type: 'date' })
   updatedDate: Date;
 
   @CreateDateColumn({ type: 'timestamp' })

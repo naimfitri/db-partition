@@ -28,7 +28,7 @@ export class GeneratorService {
       const startDate = new Date();
       startDate.setHours(0, 0, 0, 0);
 
-      startDate.setDate(startDate.getDate() - 18);
+      startDate.setDate(startDate.getDate() - 14);
 
       // Generate data for each date
       for (let dateIndex = 0; dateIndex < numberOfDates; dateIndex++) {
@@ -46,8 +46,8 @@ export class GeneratorService {
             const record = this.testingRepository.create({
               randname: this.generateRandomName(),
               randnumb: this.generateRandomNumber(),
-              createdDate: currentDate,
               updatedDate: currentDate,
+              createdDate: currentDate,
             });
             batch.push(record);
           }
