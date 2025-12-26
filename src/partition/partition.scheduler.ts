@@ -9,6 +9,7 @@ export class PartitionScheduler implements OnModuleInit {
   private readonly logger = new Logger(PartitionScheduler.name);
   private readonly enabled: boolean;
   private readonly cronSchedule: string;
+  private readonly timezone: string;
 
   constructor(
     private partitionService: PartitionService,
@@ -17,6 +18,7 @@ export class PartitionScheduler implements OnModuleInit {
   ) {
     this.enabled = this.configService.get('partition.enabled') || false;
     this.cronSchedule = this.configService.get('partition.cronSchedule') || '0 2 * * *';
+    this.timezone = this.configService.get('partition.timezone') || '28800';
   }
 
   /**
@@ -29,6 +31,13 @@ export class PartitionScheduler implements OnModuleInit {
     }
 
     this.logger.log('Initializing partition manager...');
+
+    if (this.timezone === '28800') {
+      this.logger.log('Initializing partition manager timezon to GMT+8')
+    } else {
+      this.logger.log('Initializing partition manager timezone to UTC')
+    }
+    
     this.logger.log(`Partition cron schedule: ${this.cronSchedule}`);
     
     try {

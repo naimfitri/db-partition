@@ -15,6 +15,8 @@ export default registerAs('partition', (): PartitionConfig => {
   return {
     enabled: process.env.PARTITION_ENABLED === 'true',
     cronSchedule: process.env.PARTITION_CRON || '0 2 * * *',
+    timezone: process.env.PARTITION_TIMEZONE_OFFSET_MS || '28800',
     tables,
+    
   };
 });

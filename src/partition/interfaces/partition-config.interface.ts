@@ -9,4 +9,5 @@ export interface PartitionConfig {
   enabled: boolean;
   tables: PartitionTableConfig[];
   cronSchedule: string;     // Default: '0 2 * * *' (2 AM daily)
+  timezone: string;
 }
