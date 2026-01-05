@@ -17,13 +17,15 @@ export class PartitionFailure {
   partitionDate: Date; // logical date used to generate partition
 
   @Prop({
+    type: String,
     required: true,
-    enum: ['CREATE_PARTITION'],
-    default: 'CREATE_PARTITION'
+    enum: ['CREATE', 'DROP', 'TRUNCATE'],
+    default: 'CREATE'
   })
   action: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: Object.values(PartitionFailureStatus),
     default: PartitionFailureStatus.PENDING,

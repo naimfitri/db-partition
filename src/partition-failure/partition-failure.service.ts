@@ -17,7 +17,7 @@ export class PartitionFailureService {
         private readonly partitionService: PartitionService,
     ) { }
 
-    async recordFailure(tableName: string, partitionName: string, partitionDate: Date, error: Error,): Promise<PartitionFailureDocument> {
+    async recordFailure(tableName: string, partitionName: string, action: string, partitionDate: Date, error: Error,): Promise<PartitionFailureDocument> {
         this.logger.warn(`Recording parition failure: ${tableName}.${partitionName}`,);
 
         try {
@@ -45,7 +45,7 @@ export class PartitionFailureService {
                 tableName,
                 partitionName,
                 partitionDate,
-                action: 'CREATE_PARTITION',
+                action: action,
                 status: PartitionFailureStatus.PENDING,
                 retryCount: 0,
                 maxRetry: 20,
@@ -80,8 +80,28 @@ export class PartitionFailureService {
 
             this.logger.log(`Found ${failures.length} failures to retry`);
 
+            // for (const failure of failures) {
+            //     await this.retryPartitionCreation(failure);
+            // }
+
             for (const failure of failures) {
-                await this.retryPartitionCreation(failure);
+                switch (failure.action) {
+                    case 'CREATE':
+                        await this.retryPartitionCreation(failure);
+                        break;
+
+                    case 'DROP':
+                        await this.retryPartitionDrop(failure);
+                        break;
+
+                    case 'TRUNCATE':
+                        await this.retryPartitionTruncate(failure);
+                        break;
+
+                    default:
+                        this.logger.error(`Unknown operation: ${failure.action}`);
+                        break;
+                }
             }
 
             this.logger.log('Partition failure retry job completed.');
@@ -116,6 +136,74 @@ export class PartitionFailureService {
             if (failure.retryCount >= failure.maxRetry) {
                 failure.status = PartitionFailureStatus.DEAD;
                 this.logger.warn(`Partition creation for ${failure.tableName}.${failure.partitionName} marked as DEAD after max retries.`);
+            } else {
+                failure.status = PartitionFailureStatus.PENDING;
+            }
+
+            await failure.save();
+        }
+    }
+
+    private async retryPartitionDrop(failure: PartitionFailureDocument): Promise<void> {
+        this.logger.log(`Retrying partition drop for ${failure.tableName}.${failure.partitionName}`);
+
+        try {
+            failure.status = PartitionFailureStatus.RETRYING;
+            failure.lastRetryAt = new Date();
+            await failure.save();
+
+            await this.partitionService.dropPartition(failure.tableName, failure.partitionName);
+
+            failure.status = PartitionFailureStatus.RESOLVED;
+            failure.resolvedAt = new Date();
+            await failure.save();
+
+            this.logger.log(`Successfully retried partition drop for ${failure.tableName}.${failure.partitionName}`);
+        } catch (error) {
+            failure.retryCount += 1;
+            failure.error = {
+                message: error.message,
+                code: (error as any).code,
+                stack: error.stack,
+            };
+
+            if (failure.retryCount >= failure.maxRetry) {
+                failure.status = PartitionFailureStatus.DEAD;
+                this.logger.warn(`Partition drop for ${failure.tableName}.${failure.partitionName} marked as DEAD after max retries.`);
+            } else {
+                failure.status = PartitionFailureStatus.PENDING;
+            }
+
+            await failure.save();
+        }
+    }
+
+    private async retryPartitionTruncate(failure: PartitionFailureDocument): Promise<void> {
+        this.logger.log(`Retrying partition truncate for ${failure.tableName}.${failure.partitionName}`);
+
+        try {
+            failure.status = PartitionFailureStatus.RETRYING;
+            failure.lastRetryAt = new Date();
+            await failure.save();
+
+            await this.partitionService.truncatePartition(failure.tableName, failure.partitionName);
+
+            failure.status = PartitionFailureStatus.RESOLVED;
+            failure.resolvedAt = new Date();
+            await failure.save();
+
+            this.logger.log(`Successfully retried partition truncate for ${failure.tableName}.${failure.partitionName}`);
+        } catch (error) {
+            failure.retryCount += 1;
+            failure.error = {
+                message: error.message,
+                code: (error as any).code,
+                stack: error.stack,
+            };
+
+            if (failure.retryCount >= failure.maxRetry) {
+                failure.status = PartitionFailureStatus.DEAD;
+                this.logger.warn(`Partition truncate for ${failure.tableName}.${failure.partitionName} marked as DEAD after max retries.`);
             } else {
                 failure.status = PartitionFailureStatus.PENDING;
             }

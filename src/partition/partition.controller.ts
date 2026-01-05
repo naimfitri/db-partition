@@ -122,12 +122,7 @@ export class PartitionController {
         const date = new Date(dto.partitionDate);
         const partitionName = `p_${dto.partitionDate.replace(/-/g, '')}`;
 
-        await this.partitionService.truncatePartition(dto.tableName, partitionName);
-
-        return {
-            success: true,
-            message: `Partition ${partitionName} truncated`,
-        };
+        return await this.partitionService.truncatePartition(dto.tableName, partitionName);
     }
 
     /**
@@ -161,12 +156,7 @@ export class PartitionController {
         const date = new Date(dto.partitionDate);
         const partitionName = `p_${dto.partitionDate.replace(/-/g, '')}`;
 
-        await this.partitionService.dropPartition(dto.tableName, partitionName);
-
-        return {
-            success: true,
-            message: `Partition ${partitionName} drop`,
-        };
+        return await this.partitionService.dropPartition(dto.tableName, partitionName);
     }
 
     /**

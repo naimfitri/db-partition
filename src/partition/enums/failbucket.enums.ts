@@ -4,3 +4,9 @@ export enum PartitionFailureStatus {
   RESOLVED = 'RESOLVED',
   DEAD = 'DEAD',
 }
+
+export enum PartitionFailureAction {
+  DROP = 'DROP',
+  TRUNCATE = 'TRUNCATE',
+  CREATE = 'CREATE',
+}

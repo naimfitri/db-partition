@@ -1,10 +1,11 @@
-import { Injectable, Logger, NotFoundException, ConflictException, InternalServerErrorException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, HttpException, InternalServerErrorException, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Repository } from 'typeorm';
 import { PartitionConfigEntity } from '../partition-config/entity/partittion-config.entity';
 import { PARTITION_CONFIG } from './partition.config';
-import { PartitionFailureService } from 'src/partition-failure/partition-failure.service';
+import { PartitionFailureService } from '../partition-failure/partition-failure.service';
+import { PartitionFailureAction } from './enums/failbucket.enums';
 
 @Injectable()
 export class PartitionService {
@@ -136,6 +137,7 @@ export class PartitionService {
                 );
             } else {
                 // No MAXVALUE partition, can add normally
+                this.logger.log(`Adding partition ${escapedPartition} for table ${escapedTable}`);
                 await this.dataSource.query(
                     `ALTER TABLE ${escapedTable} ADD PARTITION (
                         PARTITION ${escapedPartition} VALUES LESS THAN (${nextDayTimestamp})
@@ -145,7 +147,7 @@ export class PartitionService {
 
             this.logger.log(`Created partition ${partitionName} for ${tableName} (Timestamp: ${nextDayTimestamp})`);
         } catch (error) {
-            if (error.message.includes('duplicate partition') || 
+            if (error.message.includes('duplicate partition') ||
                 error.message.includes('already exists')) {
                 this.logger.debug(`Partition ${partitionName} already exists for ${tableName}`);
                 return;
@@ -158,11 +160,16 @@ export class PartitionService {
             await this.failureService.recordFailure(
                 tableName,
                 partitionName,
+                PartitionFailureAction.CREATE,
                 date,
                 error
             );
 
-            throw error;
+            throw {
+                sqlMessage: error.sqlMessage || error.message,
+                code: error.code || 'UNKNOWN_ERROR',
+                message: error.sqlMessage || error.message,
+            };
         }
     }
 
@@ -242,7 +249,7 @@ export class PartitionService {
             cutoffDate
         );
 
-        this.logger.log(`Found ${oldPartitions.length} old partitions to ${tableConfig.cleanupAction}`);
+        this.logger.log(`Found ${oldPartitions.length} old partitions from ${tableConfig.tableName} to ${tableConfig.cleanupAction}`);
 
         for (const partition of oldPartitions) {
             if (tableConfig.cleanupAction === 'DROP') {
@@ -287,27 +294,99 @@ export class PartitionService {
     /**
    * Drop partition
    */
-    async dropPartition(tableName: string, partitionName: string): Promise<void> {
+    async dropPartition(tableName: string, partitionName: string): Promise<{ success: boolean; message: string }> {
         const escapedTable = await this.validateAndEscapeTableName(tableName);
         const escapedPartition = this.escapeIdentifier(partitionName);
 
-        await this.dataSource.query(
-            `ALTER TABLE ${escapedTable} DROP PARTITION ${escapedPartition}`
-        );
-        this.logger.warn(`Dropped partition ${partitionName} from ${tableName}`);
+        const input: string = partitionName;
+
+        const year = parseInt(input.substring(2, 6));
+        const month = parseInt(input.substring(6, 8)) - 1; // Subtract 1 for 0-indexing
+        const day = parseInt(input.substring(8, 10));
+
+        const date = new Date(year, month, day);
+
+        try {
+            await this.dataSource.query(
+                `ALTER TABLE ${escapedTable} DROP PARTITION ${escapedPartition}`
+            );
+            this.logger.warn(`Dropped partition ${partitionName} from ${tableName}`);
+
+            return {
+                success: true,
+                message: `Partition ${partitionName} dropped successfully from ${tableName}`,
+            };
+
+        } catch (err) {
+
+            this.logger.error(
+                `Failed to drop partition ${partitionName} for ${tableName}: ${err.message}`
+            );
+
+            await this.failureService.recordFailure(
+                tableName,
+                partitionName,
+                PartitionFailureAction.DROP,
+                date,
+                err
+            );
+
+            throw new HttpException({
+                success: false,
+                message: `Failed to drop partition ${partitionName}`,
+                error: err.sqlMessage || err.message,
+                code: err.code || 'DB_ERROR'
+            }, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     /**
      * Truncate partition (keeps structure, removes data)
      */
-    async truncatePartition(tableName: string, partitionName: string): Promise<void> {
+    async truncatePartition(tableName: string, partitionName: string): Promise<{ success: boolean; message: string }> {
         const escapedTable = await this.validateAndEscapeTableName(tableName);
         const escapedPartition = this.escapeIdentifier(partitionName);
 
-        await this.dataSource.query(
-            `ALTER TABLE ${escapedTable} TRUNCATE PARTITION ${escapedPartition}`
-        );
-        this.logger.log(`Truncated partition ${partitionName} in ${tableName}`);
+        const input: string = partitionName;
+
+        const year = parseInt(input.substring(2, 6));
+        const month = parseInt(input.substring(6, 8)) - 1; // Subtract 1 for 0-indexing
+        const day = parseInt(input.substring(8, 10));
+
+        const date = new Date(year, month, day);
+
+        try {
+            await this.dataSource.query(
+                `ALTER TABLE ${escapedTable} TRUNCATE PARTITION ${escapedPartition}`
+            );
+            this.logger.log(`Truncated partition ${partitionName} in ${tableName}`);
+
+            return {
+                success: true,
+                message: `Partition ${partitionName} truncate successfully from ${tableName}`,
+            };
+
+        } catch (err) {
+
+            this.logger.error(
+                `Failed to truncate partition ${partitionName} for ${tableName}: ${err.message}`
+            );
+
+            await this.failureService.recordFailure(
+                tableName,
+                partitionName,
+                PartitionFailureAction.TRUNCATE,
+                date,
+                err
+            );
+
+            throw new HttpException({
+                success: false,
+                message: `Failed to truncate partition ${partitionName}`,
+                error: err.sqlMessage || err.message,
+                code: err.code || 'DB_ERROR'
+            }, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     /**
@@ -437,16 +516,6 @@ export class PartitionService {
             if (!columnInfo) {
                 throw new NotFoundException(`Column 'updatedDate' not found in table ${tableName}`);
             }
-
-            // Get date range from updatedDate
-            // const [dateRange] = await this.dataSource.query(
-            //     `SELECT 
-            // MIN(DATE(updatedDate)) as earliest_date,
-            // MAX(DATE(updatedDate)) as latest_date,
-            // COUNT(*) as actual_rows,
-            // COUNT(DISTINCT DATE(updatedDate)) as unique_dates
-            // FROM ${escapedTable}`
-            // );
 
             const [dateRange] = await this.dataSource.query(
                 `SELECT 
