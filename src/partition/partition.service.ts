@@ -1,9 +1,10 @@
-import { Injectable, Logger, NotFoundException, ConflictException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, InternalServerErrorException, Inject, forwardRef } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Repository } from 'typeorm';
 import { PartitionConfigEntity } from '../partition-config/entity/partittion-config.entity';
 import { PARTITION_CONFIG } from './partition.config';
+import { PartitionFailureService } from 'src/partition-failure/partition-failure.service';
 
 @Injectable()
 export class PartitionService {
@@ -13,6 +14,8 @@ export class PartitionService {
         @InjectDataSource() private dataSource: DataSource,
         @InjectRepository(PartitionConfigEntity)
         private configRepository: Repository<PartitionConfigEntity>,
+        @Inject(forwardRef(() => PartitionFailureService))
+        private failureService: PartitionFailureService,
     ) { }
 
     /**
@@ -142,9 +145,24 @@ export class PartitionService {
 
             this.logger.log(`Created partition ${partitionName} for ${tableName} (Timestamp: ${nextDayTimestamp})`);
         } catch (error) {
-            if (!error.message.includes('duplicate partition')) {
-                throw error;
+            if (error.message.includes('duplicate partition') || 
+                error.message.includes('already exists')) {
+                this.logger.debug(`Partition ${partitionName} already exists for ${tableName}`);
+                return;
             }
+
+            this.logger.error(
+                `Failed to create partition ${partitionName} for ${tableName}: ${error.message}`
+            );
+
+            await this.failureService.recordFailure(
+                tableName,
+                partitionName,
+                date,
+                error
+            );
+
+            throw error;
         }
     }
 
@@ -169,8 +187,18 @@ export class PartitionService {
 
             const exist = await this.partitionExists(tableConfig.tableName, targetDate);
 
-            if (!exist) {
-                await this.createPartition(tableConfig.tableName, targetDate);
+            try {
+                const exist = await this.partitionExists(tableConfig.tableName, targetDate);
+
+                if (!exist) {
+                    await this.createPartition(tableConfig.tableName, targetDate);
+                }
+            } catch (error) {
+                // Error already logged and recorded in createPartition
+                // Continue with next partition
+                this.logger.warn(
+                    `Skipping partition creation for ${tableConfig.tableName} on ${targetDate.toISOString().split('T')[0]} due to error`
+                );
             }
         }
     }

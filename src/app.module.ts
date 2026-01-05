@@ -11,6 +11,8 @@ import partitionConfig from './config/partition.config';
 import { validationSchema } from './config/validation.schema';
 import { PartitionConfigModule } from './partition-config/partition-config.module';
 import { GeneratorModule } from './generator/generator.module';
+import { PartitionFailureModule } from './partition-failure/partition-failure.module';
+import { MongooseModule } from '@nestjs/mongoose';
 
 
 @Module({
@@ -41,9 +43,11 @@ import { GeneratorModule } from './generator/generator.module';
         logging: false,
       }),
     }),
+    MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost/partition-manager'),
     ScheduleModule.forRoot(),
     PartitionConfigModule,
     GeneratorModule,
+    PartitionFailureModule,
   ],
   controllers: [AppController],
   providers: [AppService],
