@@ -6,14 +6,10 @@ import { HealthModule } from './health/health.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import databaseConfig from './config/database.config';
-import partitionConfig from './config/partition.config';
-import { validationSchema } from './config/validation.schema';
 import { PartitionConfigModule } from './partition-config/partition-config.module';
 import { GeneratorModule } from './generator/generator.module';
 import { PartitionFailureModule } from './partition-failure/partition-failure.module';
 import { MongooseModule } from '@nestjs/mongoose';
-import { PartitionSchedulerModule } from './partition-scheduler/partition-scheduler.module';
 
 
 @Module({
@@ -22,8 +18,9 @@ import { PartitionSchedulerModule } from './partition-scheduler/partition-schedu
     HealthModule,
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [databaseConfig, partitionConfig],
-      validationSchema,
+      envFilePath: '.env',
+      // load: [databaseConfig, partitionConfig],
+      // validationSchema,
       validationOptions: {
         allowUnknown: true,
         abortEarly: false,
@@ -33,13 +30,13 @@ import { PartitionSchedulerModule } from './partition-scheduler/partition-schedu
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'mariadb',
-        host: config.get('database.host'),
-        port: config.get('database.port'),
-        username: config.get('database.username'),
-        password: config.get('database.password'),
-        database: config.get('database.database'),
+        host: config.get('DATABASE_HOST', 'localhost'),
+        port: config.get('DATABASE_PORT', 3306),
+        username: config.get('DATABASE_USER', 'root'),
+        password: config.get('DATABASE_PASSWORD', ''),
+        database: config.get('DATABASE_NAME', 'partition_db'),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false, 
+        synchronize: false,
         migrationsRun: false,
         logging: false,
       }),
@@ -49,7 +46,6 @@ import { PartitionSchedulerModule } from './partition-scheduler/partition-schedu
     PartitionConfigModule,
     GeneratorModule,
     PartitionFailureModule,
-    PartitionSchedulerModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -26,9 +26,9 @@ export class PartitionScheduler implements OnModuleInit {
     @InjectRepository(PartitionConfigEntity)
     private configRepository: Repository<PartitionConfigEntity>,
   ) {
-    this.enabled = this.configService.get('partition.enabled') || false;
-    this.cronSchedule = this.configService.get('partition.cronSchedule') || '0 2 * * *';
-    this.timezone = this.configService.get('partition.timezone') || '28800';
+    this.enabled = this.configService.get('PARTITION_ENABLED') === 'true';
+    this.cronSchedule = this.configService.get('PARTITION_CRON') || '0 2 * * *';
+    this.timezone = this.configService.get('PARTITION_TIMEZONE_OFFSET_MS') || '28800';
   }
 
   /**
@@ -104,14 +104,17 @@ export class PartitionScheduler implements OnModuleInit {
   }
 
   async handleDailyPartitionMaintenanceScheduler() {
+    const time = parseInt(this.timezone) * 1000;
 
     if (!this.enabled) return;
 
-    const now = new Date();
+    const now = new Date(Date.now() + time);
 
     this.logger.log(`Partition scheduler tick at ${now.toISOString()}`);
 
     const dueConfigs = await this.partitionService.getTablesByCurrentTime(now);
+
+    this.logger.log(`Found ${dueConfigs.length} partition configurations due for maintenance`);
 
     if (dueConfigs.length === 0) {
       this.logger.debug('No partition maintenance due');
@@ -141,6 +144,8 @@ export class PartitionScheduler implements OnModuleInit {
       await this.partitionService.ensureFuturePartitions([config]);
       await this.partitionService.cleanupOldPartitions([config]);
       // await this.markSuccess(id);
+
+      await this.partitionService.markScheduleRunComplete(id);
 
       this.logger.log(`Partition maintenance completed for ${tableName}`);
     } catch (error) {

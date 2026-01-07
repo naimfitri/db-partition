@@ -68,13 +68,15 @@ export class PartitionService {
      */
     async getTablesByCurrentTime(now: Date): Promise<PartitionConfigEntity[]> {
         this.logger.log(`Fetching partition configurations scheduled for time ${now.toISOString()}`);
+
+        const timeNow = new Date(now.getTime());
         const configs = await this.configRepository.find({
             where: { 
-                nextRunAt: LessThanOrEqual(now), 
+                nextRunAt: LessThanOrEqual(timeNow), 
                 enabled: true,
             }
         });
-        this.logger.log(`Retrieved ${configs.length} partition configurations for time ${now.toISOString()}`);
+        this.logger.log(`Retrieved ${configs.length} partition configurations for time ${timeNow.toISOString()}`);
         return configs; 
     }
 
@@ -495,6 +497,27 @@ export class PartitionService {
      */
     private formatDate(date: Date): string {
         return date.toISOString().split('T')[0];
+    }
+
+    async markScheduleRunComplete(id: number): Promise<void> {
+
+        const config = await this.configRepository.findOne({ where: { id } });
+
+        if (!config) {
+            throw new NotFoundException(`Partition config with ID ${id} not found`);
+        }
+
+        const nextRunAt = await this.calculateNextRunAt(config.scheduledTime);
+
+        const timeNow = new Date();
+
+        config.lastRunAt = timeNow;
+        config.nextRunAt = nextRunAt;
+        config.isRunning = false;
+
+        await this.configRepository.save(config);
+
+        this.logger.log(`Marked schedule run complete for config Table ${config.tableName}. Next run at ${nextRunAt.toISOString()}`);
     }
 
 

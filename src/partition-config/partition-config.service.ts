@@ -46,7 +46,7 @@ export class PartitionConfigService {
      */
     async createConfig(dto: CreatePartitionConfigDto): Promise<PartitionConfigEntity> {
         this.logger.log(`Creating partition config for table ${dto.tableName}`);
-        
+
         // Check if table config already exists
         const existing = await this.configRepository.findOne({
             where: { tableName: dto.tableName }
@@ -110,6 +110,13 @@ export class PartitionConfigService {
             }
         }
 
+        if (dto.scheduledTime && dto.scheduledTime !== config.scheduledTime) {
+            this.logger.log(`scheduledTime changed from ${config.scheduledTime} to ${dto.scheduledTime}, recalculating nextRunAt`);
+            const nextRunAt = await this.calculateNextRunAt(dto.scheduledTime);
+            dto.nextRunAt = nextRunAt;
+            this.logger.log(`New nextRunAt calculated: ${nextRunAt.toISOString()}`);
+        }
+
         Object.assign(config, dto);
         const updatedConfig = await this.configRepository.save(config);
         this.logger.log(`Successfully updated partition config with ID ${id}`);
@@ -124,5 +131,21 @@ export class PartitionConfigService {
         const config = await this.getConfigById(id);
         await this.configRepository.remove(config);
         this.logger.log(`Successfully deleted partition config for table ${config.tableName}`);
+    }
+
+    private async calculateNextRunAt(scheduledTime: string): Promise<Date> {
+        const [hourStr, minuteStr] = scheduledTime.split(':');
+        const hour = parseInt(hourStr, 10);
+        const minute = parseInt(minuteStr, 10);
+
+        const now = new Date();
+        const nextRun = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+
+        // If the scheduled time today has already passed, set for tomorrow
+        if (nextRun <= now) {
+            nextRun.setDate(nextRun.getDate() + 1);
+        }
+
+        return nextRun;
     }
 }
