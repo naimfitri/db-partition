@@ -6,6 +6,7 @@ import { TruncatePartitionDto } from './dto/truncate-partition.dto';
 // import { CreatePartitionConfigDto, UpdatePartitionConfigDto, PartitionConfigResponseDto } from './dto/create-partition-config.dto';
 import { MigrateTableDto } from './dto/migrate-tabe.dto';
 import { DropPartitionDto } from './dto/drop-partition.dto';
+import { CreatePartitionConfigDto } from '../partition-config/dto/create-partition-config.dto';
 
 @ApiTags('partitions')
 @Controller('partitions')
@@ -275,7 +276,8 @@ export class PartitionController {
             dto.tableName,
             dto.retentionDays,
             dto.preCreateDays,
-            dto.cleanupAction
+            dto.cleanupAction,
+            dto.scheduledTime
         );
     }
 }

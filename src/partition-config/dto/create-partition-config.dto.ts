@@ -49,6 +49,38 @@ export class CreatePartitionConfigDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  @ApiProperty({
+    example: '02:00',
+    description: 'Scheduled time for daily partition management tasks in HH:MM format',
+    default: '00:00',
+    required: true
+  })
+  @IsString()
+  scheduledTime: string;
+
+  @ApiProperty({
+    example: '2025-12-24T12:00:00Z',
+    description: 'Timestamp of the last partition management run',
+    required: false
+  })
+  lastRunAt: Date | null;
+  
+  @ApiProperty({
+    example: '2025-12-25T12:00:00Z',
+    description: 'Timestamp of the next scheduled partition management run',
+    required: false
+  })
+  nextRunAt: Date | null;
+
+  @ApiProperty({
+    example: false,
+    description: 'Indicates if a partition management task is currently running',
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  isRunning: boolean;
 }
 
 export class UpdatePartitionConfigDto extends PartialType(CreatePartitionConfigDto) {
@@ -80,6 +112,15 @@ export class PartitionConfigResponseDto {
 
   @ApiProperty({ example: true })
   enabled: boolean;
+
+  @ApiProperty({ example: '02:00' })
+  scheduledTime: string;
+
+  @ApiProperty({ example: '2025-12-24T12:00:00Z' })
+  lastRunAt: Date | null;
+
+  @ApiProperty({ example: '2025-12-25T12:00:00Z' })
+  nextRunAt: Date | null;
 
   @ApiProperty({ example: '2025-12-24T12:00:00Z' })
   createdAt: Date;

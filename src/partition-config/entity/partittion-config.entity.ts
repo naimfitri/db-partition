@@ -25,6 +25,18 @@ export class PartitionConfigEntity {
   @Column({ type: 'boolean', default: true })
   enabled: boolean;
 
+  @Column({ name: 'scheduled_time', type: 'varchar', length: 5, default: '00:00' })
+  scheduledTime: string;
+
+  @Column({ name: 'last_run_at', type: 'timestamp', nullable: true })
+  lastRunAt: Date | null;
+
+  @Column({ name: 'next_run_at', type: 'timestamp', nullable: true })
+  nextRunAt: Date | null;
+
+  @Column({ name: 'is_running', type: 'boolean', default: false })
+  isRunning: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

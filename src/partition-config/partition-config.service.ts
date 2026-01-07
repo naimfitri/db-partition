@@ -1,8 +1,9 @@
 import { Injectable, Logger, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
 import { PartitionConfigEntity } from './entity/partittion-config.entity';
 import { CreatePartitionConfigDto, UpdatePartitionConfigDto } from './dto/create-partition-config.dto';
+
 
 @Injectable()
 export class PartitionConfigService {

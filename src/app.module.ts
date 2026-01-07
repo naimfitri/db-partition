@@ -13,6 +13,7 @@ import { PartitionConfigModule } from './partition-config/partition-config.modul
 import { GeneratorModule } from './generator/generator.module';
 import { PartitionFailureModule } from './partition-failure/partition-failure.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { PartitionSchedulerModule } from './partition-scheduler/partition-scheduler.module';
 
 
 @Module({
@@ -48,6 +49,7 @@ import { MongooseModule } from '@nestjs/mongoose';
     PartitionConfigModule,
     GeneratorModule,
     PartitionFailureModule,
+    PartitionSchedulerModule,
   ],
   controllers: [AppController],
   providers: [AppService],

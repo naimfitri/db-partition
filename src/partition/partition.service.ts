@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, ConflictException, HttpException, InternalServerErrorException, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, LessThanOrEqual } from 'typeorm';
 import { Repository } from 'typeorm';
 import { PartitionConfigEntity } from '../partition-config/entity/partittion-config.entity';
 import { PARTITION_CONFIG } from './partition.config';
@@ -64,13 +64,37 @@ export class PartitionService {
     }
 
     /**
-     * Get all active partition configurations from database
+     * Get config based on time schedule
      */
-    async getActiveConfigs(): Promise<PartitionConfigEntity[]> {
-        return await this.configRepository.find({
-            where: { enabled: true },
-            order: { tableName: 'ASC' }
+    async getTablesByCurrentTime(now: Date): Promise<PartitionConfigEntity[]> {
+        this.logger.log(`Fetching partition configurations scheduled for time ${now.toISOString()}`);
+        const configs = await this.configRepository.find({
+            where: { 
+                nextRunAt: LessThanOrEqual(now), 
+                enabled: true,
+            }
         });
+        this.logger.log(`Retrieved ${configs.length} partition configurations for time ${now.toISOString()}`);
+        return configs; 
+    }
+
+    /**
+     * Get next maintainance run time based on scheduledTime
+     */
+    private async calculateNextRunAt(scheduledTime: string): Promise<Date> {
+        const [hourStr, minuteStr] = scheduledTime.split(':');
+        const hour = parseInt(hourStr, 10);
+        const minute = parseInt(minuteStr, 10);
+
+        const now = new Date();
+        const nextRun = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+
+        // If the scheduled time today has already passed, set for tomorrow
+        if (nextRun <= now) {
+            nextRun.setDate(nextRun.getDate() + 1);
+        }
+
+        return nextRun;
     }
 
     /**
@@ -176,8 +200,7 @@ export class PartitionService {
     /**
      * Create partitions N days ahead
      */
-    async ensureFuturePartitions(): Promise<void> {
-        const configs = await this.getActiveConfigs();
+    async ensureFuturePartitions(configs: PartitionConfigEntity[]): Promise<void> {
 
         // Process all tables in parallel
         await Promise.all(
@@ -228,8 +251,7 @@ export class PartitionService {
     /**
      * Cleanup old partitions based on retention
      */
-    async cleanupOldPartitions(): Promise<void> {
-        const configs = await this.getActiveConfigs();
+    async cleanupOldPartitions(configs: PartitionConfigEntity[]): Promise<void> {
 
         await Promise.all(
             configs.map(tableConfig => this.processCleanupOldPartitions(tableConfig))
@@ -456,6 +478,10 @@ export class PartitionService {
 
     }
 
+    //////////////////////////////////////////
+    //              HELPERS                 //
+    //////////////////////////////////////////
+
     /**
    * Helper: Generate partition name (p_YYYYMMDD)
    */
@@ -587,7 +613,7 @@ export class PartitionService {
     /**
      * Migrate existing table to partitioned table
      */
-    async migrateTableToPartitions(tableName: string, retentionDays: number = 30, preCreateDays: number = 7, cleanupAction: 'DROP' | 'TRUNCATE' = 'DROP') {
+    async migrateTableToPartitions(tableName: string, retentionDays: number = 30, preCreateDays: number = 7, cleanupAction: 'DROP' | 'TRUNCATE' = 'DROP', scheduledTime: string = '00:00') {
         const escapedTable = await this.validateAndEscapeTableName(tableName);
 
         this.logger.log(`Starting migration for table: ${tableName}`);
@@ -674,18 +700,13 @@ export class PartitionService {
 
 
         const parseDbDate = (dateStr: string) => {
-            // Split "2025-12-15 00:00:00" into [2025, 12, 15]
             const [datePart] = dateStr.split(' ');
             const [year, month, day] = datePart.split('-').map(Number);
-            // Create a date using local time values (month is 0-indexed in JS)
             return new Date(year, month - 1, day, 0, 0, 0, 0);
         };
 
         const startDate = new Date(analysis.dateRange.earliestDate);
         const endDate = new Date(analysis.dateRange.latestDate);
-
-        // Create historical partition for old data
-        // const partitions = [`PARTITION p_historical VALUES LESS THAN (TO_DAYS('${this.formatDate(startDate)}'))`];
 
         const partitions: string[] = [];
 
@@ -786,12 +807,18 @@ export class PartitionService {
         // Step 7: Add to partition_config
         this.logger.log(`Adding ${tableName} to partition configuration`);
 
+        const nextRunAt = await this.calculateNextRunAt(scheduledTime);
+
         const config = this.configRepository.create({
             tableName,
             retentionDays,
             preCreateDays,
             cleanupAction,
-            enabled: true
+            enabled: true,
+            scheduledTime,
+            lastRunAt: null,
+            nextRunAt: nextRunAt,
+            isRunning: false
         });
 
         await this.configRepository.save(config);
@@ -813,4 +840,5 @@ export class PartitionService {
             }
         };
     }
+
 }

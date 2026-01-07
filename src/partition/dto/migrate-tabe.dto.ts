@@ -44,4 +44,13 @@ export class MigrateTableDto {
   @IsOptional()
   @IsEnum(['DROP', 'TRUNCATE'])
   cleanupAction?: 'DROP' | 'TRUNCATE' = 'DROP';
+
+  @ApiProperty({
+    example: '02:00',
+    description: 'Scheduled time for daily partition management tasks in HH:MM format',
+    default: '00:00',
+  })
+  @IsOptional()
+  @IsString()
+  scheduledTime?: string;
 }
